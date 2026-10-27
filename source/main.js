@@ -7,6 +7,8 @@ import Select from 'ol/interaction/Select.js';
 
 import TileLayer from 'ol/layer/Tile.js';
 import VectorLayer from 'ol/layer/Vector.js';
+import ImageLayer from 'ol/layer/Image.js';
+import ImageStatic from 'ol/source/ImageStatic.js';
 
 import OSM from 'ol/source/OSM.js';
 import VectorSource from 'ol/source/Vector.js';
@@ -33,24 +35,6 @@ const SERVER_URL = 'http://localhost:8080';
 //const SERVER_URL = "visent.hlrs.de";
 const MIN_DRAW_ZOOM = 18;
 const MIN_MODULE_ZOOM = 16;
-
-const MOUNTING_DIRECTIONS = [
-    {
-        value: 'positive-v',
-        symbol: '↑→'    },
-    {
-        value: 'positive-u',
-        symbol: '→↑'
-    },
-    {
-        value: 'negative-v',
-        symbol: '↓←'
-    },
-    {
-        value: 'negative-u',
-        symbol: '←↓'
-    }
-];
 
 // =========================================================
 // DOM
@@ -143,6 +127,15 @@ const selectionStyle = new Style({
 // SOURCES UND LAYER
 // =========================================================
 
+const MIN_SNAPSHOT_ZOOM = 19;
+
+const snapshotLayer = new ImageLayer({
+    visible: false,
+    opacity: 1,
+    zIndex: 1
+});
+
+
 const drawingSource = new VectorSource();
 const moduleAreaSource = new VectorSource();
 const previewSource = new VectorSource();
@@ -174,15 +167,22 @@ const selectionBoxLayer = new VectorLayer({
 
 const map = new Map({
     target: 'map-container',
+    
     layers: [
         new TileLayer({
             source: new OSM()
         }),
+
+        // Detaillierte OpenCOVER-Draufsicht
+        snapshotLayer,
+
+        // Bestehende PV-Ebenen
         moduleAreaLayer,
         drawingLayer,
         previewLayer,
         selectionBoxLayer
     ],
+
     view: new View({
         center: fromLonLat([
             9.18,
@@ -233,7 +233,7 @@ let roofType = null;
 let roofTiltDeg = null;
 let moduleTiltDeg = 0;
 
-let mountingDirectionIndex = 0;
+let mountingType = 'south';
 let automaticRowGapM = 0;
 
 let currentRoofDraftId = null;
@@ -415,13 +415,125 @@ function getCurrentAreaCorners() {
         }));
 }
 
-function getCurrentMountingDirection() {
-    return (
-        MOUNTING_DIRECTIONS[
-            mountingDirectionIndex
-        ]
+
+// =========================================================
+// AUTOMATISCHE AUSRICHTUNG DER MODULAUFSTÄNDERUNG
+// =========================================================
+
+function normalizeAzimuth(deg) {
+    return (deg + 360) % 360;
+}
+
+function calculateVectorAzimuth(vector) {
+    return normalizeAzimuth(
+        Math.atan2(vector[0], vector[1]) *
+        180 / Math.PI
     );
 }
+
+function calculateAngularDifference(a, b) {
+    return Math.abs(
+        ((a - b + 540) % 360) - 180
+    );
+}
+
+function getRoofOrientationData() {
+    if (!currentAreaFeature) {
+        return null;
+    }
+
+    const coordinates = currentAreaFeature
+        .getGeometry()
+        .getCoordinates()[0];
+
+    const p0 = coordinates[0];
+    const p1 = coordinates[1];
+    const p3 = coordinates[3];
+
+    const u = [
+        p1[0] - p0[0],
+        p1[1] - p0[1]
+    ];
+
+    const v = [
+        p3[0] - p0[0],
+        p3[1] - p0[1]
+    ];
+
+    const directions = [
+        { value: 'positive-v', vector: v },
+        { value: 'positive-u', vector: u },
+        { value: 'negative-v', vector: [-v[0], -v[1]] },
+        { value: 'negative-u', vector: [-u[0], -u[1]] }
+    ].map(item => ({
+        ...item,
+        azimuthDeg: calculateVectorAzimuth(item.vector)
+    }));
+
+    // Richtung mit der geringsten Abweichung zu 180°
+    const south = directions.reduce((best, item) =>
+        calculateAngularDifference(item.azimuthDeg, 180) <
+        calculateAngularDifference(best.azimuthDeg, 180)
+            ? item
+            : best
+    );
+
+    // Nur die beiden zur Südrichtung orthogonalen
+    // Dachkantenrichtungen kommen für Ost-West infrage.
+    const eastCandidates = directions.filter(item =>
+        Math.abs(
+            calculateAngularDifference(
+                item.azimuthDeg,
+                south.azimuthDeg
+            ) - 90
+        ) < 1
+    );
+
+    const east = eastCandidates.reduce((best, item) =>
+        calculateAngularDifference(item.azimuthDeg, 90) <
+        calculateAngularDifference(best.azimuthDeg, 90)
+            ? item
+            : best
+    );
+
+    return {
+        southDirection: south.value,
+        southAzimuthDeg: south.azimuthDeg,
+        southVector: south.vector,
+
+        eastDirection: east.value,
+        eastAzimuthDeg: east.azimuthDeg,
+        eastVector: east.vector,
+
+        westAzimuthDeg: normalizeAzimuth(
+            east.azimuthDeg + 180
+        )
+    };
+}
+
+
+function getCurrentMountingDirection() {
+    const orientation = getRoofOrientationData();
+
+    if (!orientation) {
+        return null;
+    }
+
+    if (mountingType === 'east_west') {
+        return {
+            value: orientation.eastDirection,
+            azimuthDeg: orientation.eastAzimuthDeg,
+            vector: orientation.eastVector
+        };
+    }
+
+    return {
+        value: orientation.southDirection,
+        azimuthDeg: orientation.southAzimuthDeg,
+        vector: orientation.southVector
+    };
+}
+
 
 // =========================================================
 // HTTP
@@ -473,121 +585,74 @@ async function postJson(
 // EINSTELLUNGEN
 // =========================================================
 
+
 function getCurrentModuleSettings() {
+    const direction = getCurrentMountingDirection();
+
     return {
-        moduleType:
-            moduleTypeInput.value,
+        moduleType: moduleTypeInput.value,
 
-        orientation:
-            orientationInput.value,
+        orientation: orientationInput.value,
 
-        mountingDirection:
-            getCurrentMountingDirection()
-                .value,
+        mountingType: mountingType,
+
+        mountingDirection: direction?.value ?? 'positive-v',
 
         tiltDeg:
             roofType === 'pitched'
                 ? 0
                 : moduleTiltDeg,
 
-        edgeDistance:
-            Number(
-                edgeDistanceInput.value
-            )
+        edgeDistance: Number(
+            edgeDistanceInput.value
+        )
     };
 }
 
+
 function updateModuleTiltFromInput() {
-    const value =
-        Number(
-            moduleTiltInput.value
-        );
+    const value = Number(moduleTiltInput.value);
 
     if (!Number.isFinite(value)) {
         return;
     }
 
-    moduleTiltDeg =
-        Math.min(
-            45,
-            Math.max(
-                0,
-                value
-            )
-        );
+    const minTilt =
+        mountingType === 'east_west' ? 1 : 0;
 
-    moduleTiltInput.value =
-        String(moduleTiltDeg);
+    moduleTiltDeg = Math.min(
+        45,
+        Math.max(minTilt, value)
+    );
+
+    moduleTiltInput.value = String(moduleTiltDeg);
 }
 
+
 function updateMountingDirectionUi() {
-    if (!currentAreaFeature) {
+    const orientation = getRoofOrientationData();
+
+    if (!orientation) {
         mountingDirectionOutput.textContent = '–';
         return;
     }
 
-    const coordinates = currentAreaFeature
-        .getGeometry()
-        .getCoordinates()[0];
+    const formatAngle = value =>
+        `${Math.round(value)}°`;
 
-    const p0 = coordinates[0];
-    const p1 = coordinates[1];
-    const p3 = coordinates[3];
-
-    const u = [
-        p1[0] - p0[0],
-        p1[1] - p0[1]
-    ];
-
-    const v = [
-        p3[0] - p0[0],
-        p3[1] - p0[1]
-    ];
-
-    let direction;
-
-    switch (getCurrentMountingDirection().value) {
-        case 'positive-v':
-            direction = v;
-            break;
-        case 'positive-u':
-            direction = u;
-            break;
-        case 'negative-v':
-            direction = [-v[0], -v[1]];
-            break;
-        case 'negative-u':
-            direction = [-u[0], -u[1]];
-            break;
-        default:
-            mountingDirectionOutput.textContent = '–';
-            return;
+    if (mountingType === 'south') {
+        mountingDirectionOutput.textContent =
+            `Süden – ${formatAngle(
+                orientation.southAzimuthDeg
+            )}`;
+    } else {
+        mountingDirectionOutput.textContent =
+            `Ost-West – ${formatAngle(
+                orientation.eastAzimuthDeg
+            )} / ${formatAngle(
+                orientation.westAzimuthDeg
+            )}`;
     }
-
-    let azimuthDeg = Math.atan2(
-        direction[0],
-        direction[1]
-    ) * 180 / Math.PI;
-
-    azimuthDeg = (azimuthDeg + 360) % 360;
-
-    const directions = [
-        'Nord',
-        'Nordost',
-        'Ost',
-        'Südost',
-        'Süd',
-        'Südwest',
-        'West',
-        'Nordwest'
-    ];
-
-    const directionName = directions[
-        Math.round(azimuthDeg / 45) % 8
-    ];
-
-    mountingDirectionOutput.textContent =
-        `${getCurrentMountingDirection().symbol} ${directionName} · ${Math.round(azimuthDeg)}°`;
 }
 
 function updateRowGapUi() {
@@ -735,6 +800,7 @@ function createPreviewModuleFeature(
 // AUFSTÄNDERUNGSPFEIL
 // =========================================================
 
+
 function createMountingDirectionControlFeature() {
     if (
         roofType !== 'flat' ||
@@ -743,122 +809,77 @@ function createMountingDirectionControlFeature() {
         return null;
     }
 
-    const coordinates =
-        currentAreaFeature
-            .getGeometry()
-            .getCoordinates()[0];
-
-    if (coordinates.length < 4) {
-        return null;
-    }
-
-    const p0 = coordinates[0];
-    const p1 = coordinates[1];
-    const p3 = coordinates[3];
+    const coordinates = currentAreaFeature
+        .getGeometry()
+        .getCoordinates()[0];
 
     const center = [
         (
-            p0[0] +
-            p1[0] +
+            coordinates[0][0] +
+            coordinates[1][0] +
             coordinates[2][0] +
-            p3[0]
+            coordinates[3][0]
         ) / 4,
         (
-            p0[1] +
-            p1[1] +
+            coordinates[0][1] +
+            coordinates[1][1] +
             coordinates[2][1] +
-            p3[1]
+            coordinates[3][1]
         ) / 4
     ];
 
-    const u = [
-        p1[0] - p0[0],
-        p1[1] - p0[1]
-    ];
+    const direction = getCurrentMountingDirection();
 
-    const v = [
-        p3[0] - p0[0],
-        p3[1] - p0[1]
-    ];
-
-    let direction;
-
-    switch (
-        getCurrentMountingDirection()
-            .value
-    ) {
-        case 'positive-v':
-            direction = v;
-            break;
-
-        case 'positive-u':
-            direction = u;
-            break;
-
-        case 'negative-v':
-            direction = [
-                -v[0],
-                -v[1]
-            ];
-            break;
-
-        case 'negative-u':
-            direction = [
-                -u[0],
-                -u[1]
-            ];
-            break;
-
-        default:
-            return null;
+    if (!direction) {
+        return null;
     }
 
-    const angle =
-        Math.atan2(
-            direction[1],
-            direction[0]
-        );
+    const vector = direction.vector;
 
-    const feature =
-        new Feature({
-            geometry:
-                new Point(center)
-        });
+    const angle = Math.atan2(
+        vector[1],
+        vector[0]
+    );
+
+    const isEastWest = mountingType === 'east_west';
+
+    const feature = new Feature({
+        geometry: new Point(center)
+    });
 
     feature.setProperties({
-        objectType:
-            'mounting-direction-control'
+        objectType: 'mounting-direction-control'
     });
 
     feature.setStyle(
         new Style({
-            text:
-                new Text({
-                    text: '➤',
-                    font:
-                        'bold 38px sans-serif',
-                    fill:
-                        new Fill({
-                            color:
-                                '#ffffff'
-                        }),
-                    stroke:
-                        new Stroke({
-                            color:
-                                '#111111',
-                            width:
-                                4
-                        }),
-                    rotation:
-                        -angle + Math.PI,
-                    rotateWithView:
-                        true
-                })
+            text: new Text({
+                text: isEastWest ? '↔' : '➤',
+
+                font: isEastWest
+                    ? 'bold 44px sans-serif'
+                    : 'bold 38px sans-serif',
+
+                fill: new Fill({
+                    color: '#ffffff'
+                }),
+
+                stroke: new Stroke({
+                    color: '#111111',
+                    width: 4
+                }),
+
+                rotation: -angle,
+
+                rotateWithView: true
+            })
         })
     );
 
     return feature;
 }
+
+
 
 function rotateMountingDirection() {
     if (
@@ -868,17 +889,25 @@ function rotateMountingDirection() {
         return;
     }
 
-    mountingDirectionIndex =
-        (
-            mountingDirectionIndex +
-            1
-        ) %
-        MOUNTING_DIRECTIONS.length;
+    mountingType =
+        mountingType === 'south'
+            ? 'east_west'
+            : 'south';
+
+    // Ost-West benötigt einen Aufstellwinkel > 0°.
+    if (
+        mountingType === 'east_west' &&
+        moduleTiltDeg === 0
+    ) {
+        moduleTiltDeg = 10;
+        moduleTiltInput.value = '10';
+    }
 
     updateMountingDirectionUi();
     updateAreaPreview();
     scheduleRoofDraftUpdate();
 }
+
 
 function handleMountingDirectionClick(pixel) {
     if (
@@ -1029,6 +1058,7 @@ async function requestRoofHeightAnalysis() {
         result.roofType,
         result.roofTiltDeg
     );
+    updateMountingDirectionUi();
 
     applyLayoutMetadata(
         result
@@ -1073,6 +1103,7 @@ async function sendRoofDraftUpdate(
         result.roofType,
         result.roofTiltDeg
     );
+    updateMountingDirectionUi();
 
     applyLayoutMetadata(
         result
@@ -1147,7 +1178,7 @@ function startAreaEditing(feature) {
     currentRoofDraftId = null;
     currentPreviewModules = [];
 
-    mountingDirectionIndex = 0;
+    mountingType = 'south';
     automaticRowGapM = 0;
 
     updateMountingDirectionUi();
@@ -1208,7 +1239,7 @@ function resetAreaEditing() {
     roofType = null;
     roofTiltDeg = null;
 
-    mountingDirectionIndex = 0;
+    mountingType = 'south';
     automaticRowGapM = 0;
 
     previewSource.clear();
@@ -1396,36 +1427,47 @@ async function finishAreaEditing() {
                     undefined
                 );
 
-                moduleFeature.setProperties({
-                    objectType:
-                        'pv-module',
+                
+            const calculatedModule = result.modules[index];
 
-                    moduleId:
-                        moduleIds[index],
+            moduleFeature.setProperties({
+                objectType: 'pv-module',
 
-                    areaId:
-                        draftId,
+                moduleId: moduleIds[index],
 
-                    corners3D:
-                        result.modules[index].corners,
+                areaId: draftId,
 
-                    moduleType:
-                        settings.moduleType,
+                corners3D: calculatedModule.corners,
 
-                    orientation:
-                        settings.orientation,
+                moduleType: settings.moduleType,
 
-                    mountingDirection:
-                        settings.mountingDirection,
+                orientation: settings.orientation,
 
-                    tiltDeg:
-                        settings.tiltDeg,
+                mountingDirection: settings.mountingDirection,
 
-                    automaticRowGapM,
+                mountingType: calculatedModule.mountingType,
 
-                    roofType,
-                    roofTiltDeg
-                });
+                orientationCategory:
+                    calculatedModule.orientationCategory,
+
+                moduleAzimuthDeg:
+                    calculatedModule.moduleAzimuthDeg,
+
+                roofReferenceAzimuthDeg:
+                    calculatedModule.roofReferenceAzimuthDeg,
+
+                rowIndex: calculatedModule.rowIndex,
+
+                rowPairId: calculatedModule.rowPairId,
+
+                tiltDeg: settings.tiltDeg,
+
+                automaticRowGapM,
+
+                roofType,
+                roofTiltDeg
+            });
+
 
                 drawingSource.addFeature(
                     moduleFeature
@@ -2221,6 +2263,24 @@ async function loadProjectFromFile(file) {
             mountingDirection:
                 item.properties.mountingDirection,
 
+            mountingType:
+                item.properties.mountingType,
+
+            orientationCategory:
+                item.properties.orientationCategory,
+
+            moduleAzimuthDeg:
+                item.properties.moduleAzimuthDeg,
+
+            roofReferenceAzimuthDeg:
+                item.properties.roofReferenceAzimuthDeg,
+
+            rowIndex:
+                item.properties.rowIndex,
+
+            rowPairId:
+                item.properties.rowPairId,
+
             tiltDeg:
                 item.properties.tiltDeg,
 
@@ -2292,9 +2352,27 @@ function updateDownloadLink() {
                                 ),
 
                             mountingDirection:
-                                feature.get(
-                                    'mountingDirection'
-                                ),
+                                feature.get('mountingDirection'),
+
+                            
+                            mountingType:
+                                feature.get('mountingType'),
+
+                            orientationCategory:
+                                feature.get('orientationCategory'),
+
+                            moduleAzimuthDeg:
+                                feature.get('moduleAzimuthDeg'),
+
+                            roofReferenceAzimuthDeg:
+                                feature.get('roofReferenceAzimuthDeg'),
+
+                            rowIndex:
+                                feature.get('rowIndex'),
+
+                            rowPairId:
+                                feature.get('rowPairId'),
+
 
                             tiltDeg:
                                 feature.get(
@@ -2522,12 +2600,9 @@ orientationInput.addEventListener(
 );
 
 moduleTiltInput.addEventListener(
-    'input',
+    'change',
     () => {
-        if (
-            roofType !==
-            'pitched'
-        ) {
+        if (roofType !== 'pitched') {
             updateModuleTiltFromInput();
             scheduleRoofDraftUpdate();
         }
@@ -2620,3 +2695,142 @@ rowGapSection.hidden =
 
 updateDownloadLink();
 updatePlaceButtonState();
+
+
+
+
+// =========================================================
+// OPENCOVER-SNAPSHOT ALS OPENLAYERS-EBENE
+// =========================================================
+
+let currentSnapshotUrl = null;
+let snapshotRequestRunning = false;
+
+async function updateSnapshotLayer() {
+    const zoom = map.getView().getZoom();
+
+    // Unterhalb des Schwellwerts deaktivieren
+    if (zoom < MIN_SNAPSHOT_ZOOM) {
+        snapshotLayer.setVisible(false);
+        return;
+    }
+
+    if (snapshotRequestRunning) {
+        return;
+    }
+
+    snapshotRequestRunning = true;
+
+    try {
+        // Aktuell sichtbarer OpenLayers-Bereich
+        const mapExtent = map.getView().calculateExtent(
+            map.getSize()
+        );
+
+        // VORLAEUFIGER TESTAUSSCHNITT
+        // Im OpenCOVER-Projektraum.
+        // Die korrekte Umrechnung des mapExtent
+        // erfolgt im naechsten Schritt.
+        const snapshotRequest = {
+            x: 100,
+            y: 60,
+            width: 80,
+            height: 60
+        };
+
+        const response = await fetch(
+            `${SERVER_URL}/get-map`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type':
+                        'application/json'
+                },
+                body: JSON.stringify(
+                    snapshotRequest
+                )
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `Snapshot-HTTP-Fehler: ${response.status}`
+            );
+        }
+
+        const imageBlob = await response.blob();
+
+        const imageUrl = URL.createObjectURL(
+            imageBlob
+        );
+
+        // Bild unmittelbar als Kartenebene anzeigen
+        const imageSource = new ImageStatic({
+            url: imageUrl,
+            imageExtent: mapExtent,
+            projection:
+                map.getView().getProjection()
+        });
+
+        snapshotLayer.setSource(imageSource);
+
+        if (currentSnapshotUrl) {
+            URL.revokeObjectURL(
+                currentSnapshotUrl
+            );
+        }
+
+        currentSnapshotUrl = imageUrl;
+
+        snapshotLayer.setVisible(
+            map.getView().getZoom() >=
+                MIN_SNAPSHOT_ZOOM
+        );
+
+        console.log(
+            "OpenCOVER-Snapshot in Karte eingefügt."
+        );
+
+    } catch (error) {
+        console.error(
+            "Snapshot konnte nicht geladen werden:",
+            error
+        );
+
+        snapshotLayer.setVisible(false);
+
+    } finally {
+        snapshotRequestRunning = false;
+    }
+}
+
+
+// Taste M: Snapshot auf der Karte anzeigen
+document.addEventListener(
+    'keydown',
+    event => {
+        if (
+            event.key.toLowerCase() === 'm' &&
+            !event.repeat &&
+            !['INPUT', 'TEXTAREA', 'SELECT'].includes(
+                document.activeElement?.tagName
+            )
+        ) {
+            updateSnapshotLayer();
+        }
+    }
+);
+
+
+// Beim Herauszoomen Snapshot ausblenden
+map.getView().on(
+    'change:resolution',
+    () => {
+        if (
+            map.getView().getZoom() <
+            MIN_SNAPSHOT_ZOOM
+        ) {
+            snapshotLayer.setVisible(false);
+        }
+    }
+);

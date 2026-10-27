@@ -1,3 +1,4 @@
+
 // =========================================================
 // GEOMETRISCHE HILFSFUNKTIONEN
 // =========================================================
@@ -44,23 +45,19 @@ function localToGlobal(point, origin) {
 // =========================================================
 // DACHEBENE
 // =========================================================
+
 function projectPointOntoRoofPlane(point, roofPlane) {
-    if (
-        !point ||
-        !point.local ||
-        !roofPlane
-    ) {
+    if (!point || !point.local || !roofPlane) {
         throw new Error(
             "Ungültiger Punkt oder ungültige Dachebene."
         );
     }
 
-    const projectedHeight =
-        getRoofHeight(
-            roofPlane,
-            point.local.x,
-            point.local.y
-        );
+    const projectedHeight = getRoofHeight(
+        roofPlane,
+        point.local.x,
+        point.local.y
+    );
 
     return {
         ...point,
@@ -79,26 +76,15 @@ function calculateRoofPlane(roofPoints) {
     const p1 = roofPoints[1];
     const p2 = roofPoints[2];
 
-    const x1 =
-        p1.local.x - p0.local.x;
+    const x1 = p1.local.x - p0.local.x;
+    const y1 = p1.local.y - p0.local.y;
+    const x2 = p2.local.x - p0.local.x;
+    const y2 = p2.local.y - p0.local.y;
 
-    const y1 =
-        p1.local.y - p0.local.y;
+    const dz1 = p1.height - p0.height;
+    const dz2 = p2.height - p0.height;
 
-    const x2 =
-        p2.local.x - p0.local.x;
-
-    const y2 =
-        p2.local.y - p0.local.y;
-
-    const dz1 =
-        p1.height - p0.height;
-
-    const dz2 =
-        p2.height - p0.height;
-
-    const determinant =
-        x1 * y2 - x2 * y1;
+    const determinant = x1 * y2 - x2 * y1;
 
     if (Math.abs(determinant) < 1e-8) {
         throw new Error(
@@ -106,13 +92,8 @@ function calculateRoofPlane(roofPoints) {
         );
     }
 
-    const a =
-        (dz1 * y2 - dz2 * y1) /
-        determinant;
-
-    const b =
-        (x1 * dz2 - x2 * dz1) /
-        determinant;
+    const a = (dz1 * y2 - dz2 * y1) / determinant;
+    const b = (x1 * dz2 - x2 * dz1) / determinant;
 
     return {
         originX: p0.local.x,
@@ -206,10 +187,7 @@ function calculateRoofBasis(roofPoints) {
         y: p1.y - p0.y
     };
 
-    const roofWidth = Math.hypot(
-        edgeU.x,
-        edgeU.y
-    );
+    const roofWidth = Math.hypot(edgeU.x, edgeU.y);
 
     if (roofWidth < 1e-8) {
         throw new Error(
@@ -232,18 +210,11 @@ function calculateRoofBasis(roofPoints) {
         edgeVRaw.y * u.y;
 
     const edgeV = {
-        x:
-            edgeVRaw.x -
-            projectionVOnU * u.x,
-        y:
-            edgeVRaw.y -
-            projectionVOnU * u.y
+        x: edgeVRaw.x - projectionVOnU * u.x,
+        y: edgeVRaw.y - projectionVOnU * u.y
     };
 
-    const roofDepth = Math.hypot(
-        edgeV.x,
-        edgeV.y
-    );
+    const roofDepth = Math.hypot(edgeV.x, edgeV.y);
 
     if (roofDepth < 1e-8) {
         throw new Error(
@@ -368,9 +339,7 @@ function calculateProjectedModuleDimensions(
         width: moduleWidth,
         length:
             moduleLength *
-            Math.cos(
-                degToRad(projectionTiltDeg)
-            )
+            Math.cos(degToRad(projectionTiltDeg))
     };
 }
 
@@ -408,17 +377,9 @@ function calculateMinimumRowGap(
     }
 
     const height =
-        moduleLength *
-        Math.sin(
-            degToRad(tiltDeg)
-        );
+        moduleLength * Math.sin(degToRad(tiltDeg));
 
-    return (
-        height /
-        Math.tan(
-            degToRad(sunElevationDeg)
-        )
-    );
+    return height / Math.tan(degToRad(sunElevationDeg));
 }
 
 // =========================================================
@@ -435,30 +396,20 @@ function createModuleCorners(
     moduleLength
 ) {
     const frontRight2D = {
-        x:
-            frontLeft2D.x +
-            basis.u.x * moduleWidth,
-        y:
-            frontLeft2D.y +
-            basis.u.y * moduleWidth
+        x: frontLeft2D.x + basis.u.x * moduleWidth,
+        y: frontLeft2D.y + basis.u.y * moduleWidth
     };
 
     const rearLeft2D = {
-        x:
-            frontLeft2D.x +
-            basis.v.x * projectedModuleLength,
-        y:
-            frontLeft2D.y +
-            basis.v.y * projectedModuleLength
+        x: frontLeft2D.x +
+           basis.v.x * projectedModuleLength,
+        y: frontLeft2D.y +
+           basis.v.y * projectedModuleLength
     };
 
     const rearRight2D = {
-        x:
-            rearLeft2D.x +
-            basis.u.x * moduleWidth,
-        y:
-            rearLeft2D.y +
-            basis.u.y * moduleWidth
+        x: rearLeft2D.x + basis.u.x * moduleWidth,
+        y: rearLeft2D.y + basis.u.y * moduleWidth
     };
 
     const corners = [
@@ -479,9 +430,7 @@ function createModuleCorners(
     if (additionalTiltDeg > 0) {
         const rise =
             moduleLength *
-            Math.sin(
-                degToRad(additionalTiltDeg)
-            );
+            Math.sin(degToRad(additionalTiltDeg));
 
         corners[2].z += rise;
         corners[3].z += rise;
@@ -522,14 +471,12 @@ function checkModuleGeometry(corners, moduleWidth, moduleLength) {
     const lengthLeft = length(v);
     const lengthRight = length(subtract(p3, p2));
 
-    // Winkel zwischen Breiten- und Längskante
     const cosine = dot(u, v) / (length(u) * length(v));
 
     const angleDeg =
         Math.acos(Math.max(-1, Math.min(1, cosine))) *
         180 / Math.PI;
 
-    // Ebenheit: Abstand von P3 zur Ebene durch P1, P2 und P4
     const normal = {
         x: u.y * v.z - u.z * v.y,
         y: u.z * v.x - u.x * v.z,
@@ -542,7 +489,7 @@ function checkModuleGeometry(corners, moduleWidth, moduleLength) {
         Math.abs(dot(normal, diagonal)) /
         length(normal);
 
-    const tolerance = 0.001; // 1 mm
+    const tolerance = 0.001;
 
     const valid =
         Math.abs(widthFront - moduleWidth) < tolerance &&
@@ -558,21 +505,79 @@ function checkModuleGeometry(corners, moduleWidth, moduleLength) {
     console.log(`Länge links: ${lengthLeft.toFixed(4)} m`);
     console.log(`Länge rechts: ${lengthRight.toFixed(4)} m`);
     console.log(`Winkel: ${angleDeg.toFixed(4)}°`);
-    console.log(`Ebenheitsabweichung: ${(planarityError * 1000).toFixed(3)} mm`);
+    console.log(
+        `Ebenheitsabweichung: ${(planarityError * 1000).toFixed(3)} mm`
+    );
     console.log(`Ergebnis: ${valid ? "OK" : "ABWEICHUNG"}`);
 
     return valid;
 }
 
 // =========================================================
+// AUTOMATISCHE AZIMUTBESTIMMUNG
+// =========================================================
+
+// Azimut:
+// 0° = Nord, 90° = Ost, 180° = Süd, 270° = West
+
+function vectorAzimuthDeg(vector) {
+    return (
+        radToDeg(Math.atan2(vector.x, vector.y)) + 360
+    ) % 360;
+}
+
+function angleDifferenceDeg(a, b) {
+    return Math.abs(((a - b + 540) % 360) - 180);
+}
+
+// Vier mögliche Neigungsrichtungen aus den Dachkanten.
+// Die nächstliegende Süd- und Ostrichtung wird ermittelt.
+
+function classifyRoofDirections(roofBasis) {
+    const directions = [
+        "positive-v",
+        "positive-u",
+        "negative-v",
+        "negative-u"
+    ];
+
+    const candidates = directions.map(direction => {
+        const basis = calculateLayoutBasis(
+            roofBasis,
+            direction
+        );
+
+        return {
+            direction,
+            azimuthDeg: vectorAzimuthDeg(basis.v)
+        };
+    });
+
+    const nearest = target => candidates.reduce(
+        (best, item) =>
+            angleDifferenceDeg(item.azimuthDeg, target) <
+            angleDifferenceDeg(best.azimuthDeg, target)
+                ? item
+                : best
+    );
+
+    const south = nearest(180);
+    const east = nearest(90);
+
+    return {
+        southDirection: south.direction,
+        southAzimuthDeg: south.azimuthDeg,
+        eastDirection: east.direction,
+        eastAzimuthDeg: east.azimuthDeg,
+        westAzimuthDeg: (east.azimuthDeg + 180) % 360
+    };
+}
+
+// =========================================================
 // MODULRASTER
 // =========================================================
 
-function createModuleLayout(
-    roofPoints,
-    roofPlane,
-    config
-) {
+function createModuleLayout(roofPoints, roofPlane, config) {
     if (!Array.isArray(roofPoints) || roofPoints.length < 4) {
         throw new Error(
             "Für das Modulraster werden vier Dachpunkte benötigt."
@@ -591,15 +596,21 @@ function createModuleLayout(
         roofMargin,
         projectionTiltDeg,
         additionalTiltDeg,
-        mountingDirection,
         designSunElevationDeg,
         maxModules = Infinity
     } = config;
 
-    if (!Number.isFinite(roofMargin) || roofMargin < 0) {
+    // Neu: Unterscheidung Süd / Ost-West
+    const mountingType = config.mountingType ?? "south";
+
+    if (!["south", "east_west"].includes(mountingType)) {
         throw new Error(
-            "Ungültiger Randabstand."
+            `Unbekannte Aufständerungsart: ${mountingType}`
         );
+    }
+
+    if (!Number.isFinite(roofMargin) || roofMargin < 0) {
+        throw new Error("Ungültiger Randabstand.");
     }
 
     if (
@@ -612,16 +623,92 @@ function createModuleLayout(
         );
     }
 
-    const roofBasis =
-        calculateRoofBasis(
-            roofPoints
+    if (
+        mountingType === "east_west" &&
+        additionalTiltDeg === 0
+    ) {
+        throw new Error(
+            "Ost-West-Aufständerung benötigt einen Aufstellwinkel größer als 0°."
         );
+    }
 
-    const layoutBasis =
-        calculateLayoutBasis(
-            roofBasis,
-            mountingDirection
-        );
+    // -----------------------------------------------------
+    // Dachbasis und Ausrichtung bestimmen
+    // -----------------------------------------------------
+
+    const roofBasis = calculateRoofBasis(roofPoints);
+
+    const orientation = classifyRoofDirections(roofBasis);
+
+    
+    const oppositeDirections = {
+        "positive-v": "negative-v",
+        "negative-v": "positive-v",
+        "positive-u": "negative-u",
+        "negative-u": "positive-u"
+    };
+
+    const mountingDirection =
+        mountingType === "south"
+            ? oppositeDirections[orientation.southDirection]
+            : orientation.eastDirection;
+
+
+    const layoutBasis = calculateLayoutBasis(
+        roofBasis,
+        mountingDirection
+    );
+
+    
+    const crossZ =
+        layoutBasis.u.x * layoutBasis.v.y -
+        layoutBasis.u.y * layoutBasis.v.x;
+
+    console.log(
+        "Orientierung der Modulbasis:",
+        crossZ > 0
+            ? "gegen Uhrzeigersinn"
+            : "im Uhrzeigersinn"
+    );
+
+    console.log(
+        "Kreuzprodukt Z:",
+        crossZ
+    );
+
+
+        
+    console.log("----- AUSRICHTUNGSTEST -----");
+
+    console.log(
+        "Aufständerungsart:",
+        mountingType
+    );
+
+    console.log(
+        "Berechneter Südazimut:",
+        orientation.southAzimuthDeg
+    );
+
+    console.log(
+        "Gewählte Montagerichtung:",
+        mountingDirection
+    );
+
+    console.log(
+        "Ansteigende Richtung:",
+        vectorAzimuthDeg(layoutBasis.v)
+    );
+
+    console.log(
+        "Tatsächlicher Modulazimut:",
+        (vectorAzimuthDeg(layoutBasis.v) + 180) % 360
+    );
+
+
+    // -----------------------------------------------------
+    // Projizierte Modulabmessungen
+    // -----------------------------------------------------
 
     const projectedDimensions =
         calculateProjectedModuleDimensions(
@@ -630,20 +717,17 @@ function createModuleLayout(
             projectionTiltDeg
         );
 
-    console.log("----- Winkelprüfung -----");
-    console.log("Projektionswinkel:", projectionTiltDeg, "°");
-    console.log("Zusätzlicher Aufstellwinkel:", additionalTiltDeg, "°");
-    console.log("Modullänge:", moduleLength, "m");
-    console.log("Projizierte Länge:", projectedDimensions.length, "m");
-    console.log("Montagerichtung:", mountingDirection);
-
     const projectedModuleWidth =
         projectedDimensions.width;
 
     const projectedModuleLength =
         projectedDimensions.length;
 
-    const rowGap =
+    // -----------------------------------------------------
+    // Reihenabstände
+    // -----------------------------------------------------
+
+    const southGap =
         additionalTiltDeg > 0
             ? calculateMinimumRowGap(
                 moduleLength,
@@ -652,51 +736,95 @@ function createModuleLayout(
             )
             : 0;
 
+    // Süd: bisheriger Mindestabstand
+    // Ost-West: gemeinsame Firstkante innerhalb eines Paars.
+    // Der freie Abstand entsteht zwischen den Modulpaaren.
+    // Vereinfachtes geometrisches Abstandsmodell.
+
+    const rowGap =
+        mountingType === "east_west"
+            ? Math.max(
+                0,
+                southGap - projectedModuleLength
+            )
+            : southGap;
+
+    // -----------------------------------------------------
+    // Verfügbare Dachfläche
+    // -----------------------------------------------------
+
     const availableRowExtent =
-        layoutBasis.rowExtent -
-        2 * roofMargin;
+        layoutBasis.rowExtent - 2 * roofMargin;
 
     const availableTiltExtent =
-        layoutBasis.tiltExtent -
-        2 * roofMargin;
+        layoutBasis.tiltExtent - 2 * roofMargin;
 
-    if (
-        availableRowExtent <= 0 ||
-        availableTiltExtent <= 0
-    ) {
-        return {
-            roofWidth: roofBasis.roofWidth,
-            roofDepth: roofBasis.roofDepth,
-            projectedModuleWidth,
-            projectedModuleLength,
-            rowGap,
-            numColumns: 0,
-            numRows: 0,
-            modules: []
-        };
+    const numColumns =
+        availableRowExtent > 0
+            ? Math.max(
+                0,
+                Math.floor(
+                    (availableRowExtent + 1e-9) /
+                    projectedModuleWidth
+                )
+            )
+            : 0;
+
+    let numPairs = 0;
+    let numRows = 0;
+
+    // -----------------------------------------------------
+    // Anzahl der Modulreihen bestimmen
+    // -----------------------------------------------------
+
+    if (availableTiltExtent > 0) {
+        if (mountingType === "east_west") {
+            const pairLength =
+                2 * projectedModuleLength;
+
+            numPairs = Math.max(
+                0,
+                Math.floor(
+                    (availableTiltExtent + rowGap + 1e-9) /
+                    (pairLength + rowGap)
+                )
+            );
+
+            numRows = 2 * numPairs;
+        } else {
+            numRows = Math.max(
+                0,
+                Math.floor(
+                    (availableTiltExtent + rowGap + 1e-9) /
+                    (projectedModuleLength + rowGap)
+                )
+            );
+        }
     }
 
-    const numColumns = Math.max(
-        0,
-        Math.floor(
-            availableRowExtent /
-            projectedModuleWidth
-        )
-    );
-
-    const rowPitch =
-        projectedModuleLength +
-        rowGap;
-
-    const numRows = Math.max(
-        0,
-        Math.floor(
-            (availableTiltExtent + rowGap) /
-            rowPitch
-        )
-    );
-
     const modules = [];
+
+    // -----------------------------------------------------
+    // Raster auf Dachfläche zentrieren
+    // -----------------------------------------------------
+
+    const usedRowExtent =
+        numColumns * projectedModuleWidth;
+
+    const usedTiltExtent =
+        mountingType === "east_west"
+            ? numPairs * 2 * projectedModuleLength +
+              Math.max(0, numPairs - 1) * rowGap
+            : numRows * projectedModuleLength +
+              Math.max(0, numRows - 1) * rowGap;
+
+    const centeredStartU =
+        roofMargin +
+        (availableRowExtent - usedRowExtent) / 2;
+
+    const centeredStartV =
+        roofMargin +
+        (availableTiltExtent - usedTiltExtent) / 2;
 
     function pointOnLayout(du, dv) {
         return {
@@ -713,10 +841,7 @@ function createModuleLayout(
 
     function toGlobalCorner(point) {
         const global = localToGlobal(
-            {
-                x: point.x,
-                y: point.y
-            },
+            point,
             roofPoints[0]
         );
 
@@ -727,70 +852,154 @@ function createModuleLayout(
         };
     }
 
+    // -----------------------------------------------------
+    // Ergebnis einschließlich Ausrichtungsinformationen
+    // -----------------------------------------------------
 
-    const usedRowExtent =
-        numColumns * projectedModuleWidth;
+    const result = () => ({
+        roofWidth: roofBasis.roofWidth,
+        roofDepth: roofBasis.roofDepth,
+        projectedModuleWidth,
+        projectedModuleLength,
+        rowGap,
+        numColumns,
+        numRows,
+        mountingType,
+        mountingDirection,
+        southAzimuthDeg: orientation.southAzimuthDeg,
+        eastAzimuthDeg: orientation.eastAzimuthDeg,
+        westAzimuthDeg: orientation.westAzimuthDeg,
+        modules
+    });
 
-    const usedTiltExtent =
-        numRows > 0
-            ? numRows * projectedModuleLength +
-            (numRows - 1) * rowGap
-            : 0;
+    // -----------------------------------------------------
+    // Module erzeugen
+    // -----------------------------------------------------
 
-    const remainingRowSpace =
-        availableRowExtent - usedRowExtent;
+    for (let row = 0; row < numRows; row++) {
 
-    const remainingTiltSpace =
-        availableTiltExtent - usedTiltExtent;
+        // Jede zweite Reihe zeigt bei Ost-West
+        // in die entgegengesetzte Richtung.
 
-    const centeredStartU =
-        roofMargin +
-        remainingRowSpace / 2;
+        const westFacing =
+            mountingType === "east_west" &&
+            row % 2 === 1;
 
-    const centeredStartV =
-        roofMargin +
-        remainingTiltSpace / 2;
+        // Die westseitigen Module werden bezüglich
+        // der Neigungsrichtung umgekehrt.
 
+        const rowBasis = westFacing
+            ? {
+                ...layoutBasis,
+                u: {
+                    x: -layoutBasis.u.x,
+                    y: -layoutBasis.u.y
+                },
+                v: {
+                    x: -layoutBasis.v.x,
+                    y: -layoutBasis.v.y
+                }
+            }
+            : layoutBasis;
 
-    for (let row = 0; row < numRows; ++row) {
-        for (let col = 0; col < numColumns; ++col) {
+        // -------------------------------------------------
+        // Position der Modulreihe
+        // -------------------------------------------------
+
+        const startV =
+            mountingType === "east_west"
+                ? centeredStartV +
+                  Math.floor(row / 2) *
+                  (2 * projectedModuleLength + rowGap) +
+                  (westFacing
+                      ? 2 * projectedModuleLength
+                      : 0)
+                : centeredStartV +
+                  row *
+                  (projectedModuleLength + rowGap);
+
+        
+        // -------------------------------------------------
+        // Tatsächlichen Modulazimut speichern
+        // -------------------------------------------------
+
+        // Die Modulfläche zeigt in die entgegengesetzte
+        // Richtung ihrer ansteigenden Kante.
+        //
+        // Bei Ost-West:
+        // Gerade Reihen -> West
+        // Ungerade Reihen -> Ost
+
+        const azimuthDeg =
+            mountingType === "south"
+                ? orientation.southAzimuthDeg
+                : (
+                    westFacing
+                        ? orientation.eastAzimuthDeg
+                        : orientation.westAzimuthDeg
+                );
+
+        for (let col = 0; col < numColumns; col++) {
+
             if (modules.length >= maxModules) {
-                return {
-                    roofWidth: roofBasis.roofWidth,
-                    roofDepth: roofBasis.roofDepth,
-                    projectedModuleWidth,
-                    projectedModuleLength,
-                    rowGap,
-                    numColumns,
-                    numRows,
-                    modules
-                };
+                return result();
             }
 
             const startU =
                 centeredStartU +
                 col * projectedModuleWidth;
 
-            const startV =
-                centeredStartV +
-                row * rowPitch;
+                
+            // -------------------------------------------------
+            // Modulecken berechnen
+            // -------------------------------------------------
 
-            const frontLeft2D =
+            const corners = createModuleCorners(
                 pointOnLayout(
-                    startU,
+                    startU +
+                    (westFacing
+                        ? projectedModuleWidth
+                        : 0),
                     startV
+                ),
+                projectedModuleWidth,
+                projectedModuleLength,
+                rowBasis,
+                roofPlane,
+                additionalTiltDeg,
+                moduleLength
+            );
+
+            // -------------------------------------------------
+            // TEST: Moduleckpunkte ausgeben
+            // -------------------------------------------------
+
+            if (modules.length === 0) {
+                console.log("----- MODUL-ECKPUNKTE -----");
+
+                corners.forEach((corner, index) => {
+                    console.log(
+                        `P${index}:`,
+                        `x=${corner.x.toFixed(3)}`,
+                        `y=${corner.y.toFixed(3)}`,
+                        `z=${corner.z.toFixed(3)}`
+                    );
+                });
+
+                console.log(
+                    "Modulazimut:",
+                    azimuthDeg
                 );
 
-            const corners =
-                createModuleCorners(
-                    frontLeft2D,
-                    projectedModuleWidth,
-                    projectedModuleLength,
-                    layoutBasis,
-                    roofPlane,
-                    additionalTiltDeg,
-                    moduleLength
+                console.log(
+                    "Aufständerung:",
+                    mountingType
                 );
+            }
+
+
+
+            
 
             // Geometrie des ersten Moduls prüfen
             if (modules.length === 0) {
@@ -801,25 +1010,35 @@ function createModuleLayout(
                 );
             }
 
+            // -------------------------------------------------
+            // Modul mit Ausrichtungsdaten speichern
+            // -------------------------------------------------
+
             modules.push({
-                corners:
-                    corners.map(
-                        toGlobalCorner
-                    )
+                corners: corners.map(toGlobalCorner),
+
+                mountingType,
+
+                orientationCategory: mountingType,
+
+                moduleAzimuthDeg: azimuthDeg,
+
+                roofReferenceAzimuthDeg:
+                    orientation.southAzimuthDeg,
+
+                rowIndex: row,
+
+                rowPairId:
+                    mountingType === "east_west"
+                        ? Math.floor(row / 2) + 1
+                        : null,
+
+                automaticRowGapM: rowGap
             });
         }
     }
 
-    return {
-        roofWidth: roofBasis.roofWidth,
-        roofDepth: roofBasis.roofDepth,
-        projectedModuleWidth,
-        projectedModuleLength,
-        rowGap,
-        numColumns,
-        numRows,
-        modules
-    };
+    return result();
 }
 
 // =========================================================
@@ -842,5 +1061,7 @@ module.exports = {
     calculateProjectedModuleDimensions,
     calculateMinimumRowGap,
     createModuleCorners,
-    createModuleLayout
+    createModuleLayout,
+    classifyRoofDirections,
+    vectorAzimuthDeg
 };

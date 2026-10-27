@@ -9,6 +9,7 @@
     "ol": "^10.3.0",
     "ol-mapbox-style": "^12.3.5",
     "papaparse": "^5.4.1",
+    "pngjs": "^7.0.0",
     "ws": "^8.20.1"
   },
   "eslintConfig": {

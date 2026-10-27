@@ -92,7 +92,8 @@ function startHttpServer({
     onDeleteModules,
     onClearModules,
     onLoadProject,
-    onGetBrowserEvents
+    onGetBrowserEvents,
+    onGetMap
 }) {
     const server = http.createServer(
         async (req, res) => {
@@ -125,6 +126,43 @@ function startHttpServer({
                             ...result
                         }
                     );
+
+                    return;
+                }
+
+                
+                if (
+                    req.method === "POST" &&
+                    req.url === "/get-map"
+                ) {
+                    if (!onGetMap) {
+                        throw new Error(
+                            "Handler für /get-map fehlt."
+                        );
+                    }
+
+                    const body = await readJsonBody(req);
+
+                    const pngBuffer = await onGetMap(body);
+
+                    res.statusCode = 200;
+
+                    res.setHeader(
+                        "Access-Control-Allow-Origin",
+                        "*"
+                    );
+
+                    res.setHeader(
+                        "Content-Type",
+                        "image/png"
+                    );
+
+                    res.setHeader(
+                        "Cache-Control",
+                        "no-store"
+                    );
+
+                    res.end(pngBuffer);
 
                     return;
                 }

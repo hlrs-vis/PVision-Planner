@@ -213,6 +213,85 @@ function createGetHeightMessage(points) {
 }
 
 
+/**
+ * Snapshot-Anfrage an MapLink.
+ *
+ * x, y: linke untere Ecke im OpenCOVER-Projektraum
+ * width, height: Ausdehnung in diesem Koordinatensystem
+ * xRes, yRes: Bildauflösung in Pixeln
+ */
+function createGetMapMessage({
+    x,
+    y,
+    width,
+    height,
+    xRes = 1024,
+    yRes = 768
+}) {
+    const values = [x, y, width, height];
+
+    if (
+        !values.every(Number.isFinite) ||
+        width <= 0 ||
+        height <= 0
+    ) {
+        throw new Error(
+            "Ungültiger Kartenausschnitt für MSG_GetMap."
+        );
+    }
+
+    if (
+        !Number.isInteger(xRes) ||
+        !Number.isInteger(yRes) ||
+        xRes <= 0 ||
+        yRes <= 0
+    ) {
+        throw new Error(
+            "Ungültige Snapshot-Auflösung."
+        );
+    }
+
+    const payload = Buffer.alloc(
+        1 + 5 + 4 * 5 + 2 * 5
+    );
+
+    let offset = 0;
+
+    payload.writeUInt8(1, offset);
+    offset += 1;
+
+    offset = writeTbInt32(
+        payload,
+        MSG_GetMap,
+        offset
+    );
+
+    // Die C++-Funktion verwendet float.
+    for (const value of values) {
+        offset = writeTbFloat(
+            payload,
+            value,
+            offset
+        );
+    }
+
+    offset = writeTbInt32(
+        payload,
+        xRes,
+        offset
+    );
+
+    offset = writeTbInt32(
+        payload,
+        yRes,
+        offset
+    );
+
+    return buildCoviseMessage(payload);
+}
+
+
+
 // =========================================================
 // MSG_SetModules
 // =========================================================
@@ -497,6 +576,80 @@ function parseMapLinkPayload(payload) {
         );
 
 
+
+    // -----------------------------------------------------
+    // MSG_GetMap: Snapshot-Antwort
+    // -----------------------------------------------------
+
+    if (command === MSG_GetMap) {
+        const x = readTokenBufferFloat(
+            payload, offsetObj
+        );
+
+        const y = readTokenBufferFloat(
+            payload, offsetObj
+        );
+
+        const width = readTokenBufferFloat(
+            payload, offsetObj
+        );
+
+        const height = readTokenBufferFloat(
+            payload, offsetObj
+        );
+
+        const xRes = readTokenBufferInt32(
+            payload, offsetObj
+        );
+
+        const yRes = readTokenBufferInt32(
+            payload, offsetObj
+        );
+
+        if (
+            xRes !== 1024 ||
+            yRes !== 768
+        ) {
+            throw new Error(
+                `Unerwartete Snapshot-Auflösung: ${xRes}x${yRes}`
+            );
+        }
+
+        const byteLength = xRes * yRes * 4;
+
+        if (
+            payload.length - offsetObj.offset <
+            byteLength
+        ) {
+            throw new Error(
+                "Snapshot enthält zu wenige Bilddaten."
+            );
+        }
+
+        // Das Bild ist das letzte Feld der Nachricht.
+        // So muss der zusätzliche Header von
+        // TokenBuffer::addBinary() hier nicht
+        // als Pixeldaten interpretiert werden.
+        const imageData = Buffer.from(
+            payload.subarray(
+                payload.length - byteLength
+            )
+        );
+
+        return {
+            controlByte,
+            command,
+            x,
+            y,
+            width,
+            height,
+            xRes,
+            yRes,
+            imageData
+        };
+    }
+
+
     // -----------------------------------------------------
     // MSG_GetHeight Antwort
     // -----------------------------------------------------
@@ -647,6 +800,7 @@ module.exports = {
     COVISE_MAPLINK_MESSAGE_TYPE,
 
     createGetHeightMessage,
+    createGetMapMessage,
     createSetModulesMessage,
     createDeleteModulesMessage,
     createClearAllModulesMessage,

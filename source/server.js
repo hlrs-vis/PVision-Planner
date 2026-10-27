@@ -1,21 +1,23 @@
 // =========================================================
 // SERVER / ANWENDUNGSLOGIK
 // =========================================================
-
 const { startHttpServer } = require("./httpServer");
 const { CoviseConnection } = require("./coviseConnection");
 
+const { PNG } = require("pngjs");
 
 const {
     MSG_GetHeight,
     MSG_SetModules,
     COVISE_MAPLINK_MESSAGE_TYPE,
     MSG_DeleteModuleRequest,
+    MSG_GetMap,
     createGetHeightMessage,
     createSetModulesMessage,
     createDeleteModulesMessage,
     createClearAllModulesMessage,
-    parseMapLinkPayload
+    parseMapLinkPayload,
+    createGetMapMessage
 } = require("./coviseProtocol");
 
 const {
@@ -36,15 +38,15 @@ const {
 // KONFIGURATION
 // =========================================================
 
-const COVISE_HOST = "visent.hlrs.de";
-//const COVISE_HOST = "127.0.0.1";
+//const COVISE_HOST = "visent.hlrs.de";
+const COVISE_HOST = "127.0.0.1";
 const COVISE_PORT = 31822;
 const COVISE_RECONNECT_MS = 2000;
 
 const HTTP_PORT = 8080;
 
 const FLAT_ROOF_LIMIT_DEG = 5;
-const ROOF_PLANARITY_TOLERANCE_M = 3.00;
+const ROOF_PLANARITY_TOLERANCE_M = 0.05;
 const DESIGN_SUN_ELEVATION_DEG = 18;
 
 const MODULE_TYPES = {
@@ -85,6 +87,7 @@ const TEST_ROOF_POINTS = [
 
 let nextModuleId = 1001;
 let pendingGetHeightRequest = null;
+let pendingGetMapRequest = null;
 let integrationTestStarted = false;
 
 const roofDrafts = new Map();
@@ -141,6 +144,7 @@ function determineRoofType(roofTiltDeg) {
         : "flat";
 }
 
+
 function validateRoofPlanarity(roofPointsLocal, roofPlane) {
     const planarity = checkRoofPlanarity(
         roofPointsLocal,
@@ -148,10 +152,18 @@ function validateRoofPlanarity(roofPointsLocal, roofPlane) {
         ROOF_PLANARITY_TOLERANCE_M
     );
 
+    console.log(
+        "Maximale Ebenheitsabweichung:",
+        planarity.maxDeviation.toFixed(4),
+        "m"
+    );
+
     if (!planarity.isPlanar) {
-        console.warn(
-            "Warnung: Dachfläche weicht von der berechneten Ebene ab.",
-            `Maximale Abweichung: ${planarity.maxDeviation.toFixed(3)} m`
+        throw new Error(
+            "Die ausgewählte Dachfläche ist nicht ausreichend eben. " +
+            `Maximale Abweichung: ${
+                planarity.maxDeviation.toFixed(3)
+            } m`
         );
     }
 
@@ -223,22 +235,26 @@ function calculateModulesForDraft(
             ? Number(settings.edgeDistance)
             : 0;
 
-    let mountingDirection = "positive-v";
+    
+    // =========================================================
+    // AUFSTÄNDERUNGSART BESTIMMEN
+    // =========================================================
 
-    if (draft.roofType === "flat") {
-        mountingDirection =
-            settings.mountingDirection;
+    const mountingType =
+        draft.roofType === "flat"
+            ? (settings.mountingType ?? "south")
+            : "south";
 
-        if (
-            !VALID_MOUNTING_DIRECTIONS.has(
-                mountingDirection
-            )
-        ) {
-            throw new Error(
-                "Ungültige Aufständerungsrichtung."
-            );
-        }
+    if (
+        mountingType !== "south" &&
+        mountingType !== "east_west"
+    ) {
+        throw new Error(
+            `Ungültige Aufständerungsart: ${mountingType}`
+        );
     }
+
+    // Die konkrete geometrische Richtung wird automatisch aus den Dachkanten bestimmt. Die Benutzerauswahl gibt nur noch die Art der Aufständerung vor.
 
     return createModuleLayout(
         draft.layoutPointsLocal,
@@ -249,9 +265,12 @@ function calculateModulesForDraft(
             roofMargin,
             projectionTiltDeg,
             additionalTiltDeg,
-            mountingDirection,
+
+            mountingType,
+
             designSunElevationDeg:
                 DESIGN_SUN_ELEVATION_DEG,
+
             maxModules
         }
     );
@@ -346,6 +365,146 @@ function handleGetHeightResponse(heights) {
 
     request.resolve(heights);
 }
+
+
+// =========================================================
+// SNAPSHOT AUS OPENCOVER
+// =========================================================
+
+function rgbaToPng(imageData, width, height) {
+    const png = new PNG({
+        width,
+        height
+    });
+
+    const rowBytes = width * 4;
+
+    // OpenGL liefert das Bild normalerweise
+    // von unten nach oben. PNG benötigt
+    // die oberste Bildzeile zuerst.
+    for (let row = 0; row < height; row++) {
+        const sourceOffset =
+            (height - 1 - row) * rowBytes;
+
+        const targetOffset =
+            row * rowBytes;
+
+        imageData.copy(
+            png.data,
+            targetOffset,
+            sourceOffset,
+            sourceOffset + rowBytes
+        );
+    }
+
+    return PNG.sync.write(png);
+}
+
+
+function requestMapSnapshot({
+    x,
+    y,
+    width,
+    height
+}) {
+    if (pendingGetMapRequest) {
+        return Promise.reject(
+            new Error(
+                "Es läuft bereits eine Snapshot-Anfrage."
+            )
+        );
+    }
+
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            pendingGetMapRequest = null;
+
+            reject(new Error(
+                "Keine Snapshot-Antwort von OpenCOVER erhalten."
+            ));
+        }, 15000);
+
+        pendingGetMapRequest = {
+            resolve,
+            reject,
+            timeout
+        };
+
+        try {
+            covise.send(
+                createGetMapMessage({
+                    x,
+                    y,
+                    width,
+                    height,
+                    xRes: 1024,
+                    yRes: 768
+                })
+            );
+        } catch (error) {
+            clearTimeout(timeout);
+            pendingGetMapRequest = null;
+            reject(error);
+        }
+    });
+}
+
+
+function handleGetMapResponse(response) {
+    if (!pendingGetMapRequest) {
+        console.warn(
+            "Snapshot empfangen, aber keine Anfrage offen."
+        );
+        return;
+    }
+
+    const request = pendingGetMapRequest;
+
+    pendingGetMapRequest = null;
+    clearTimeout(request.timeout);
+
+    try {
+        const pngBuffer = rgbaToPng(
+            response.imageData,
+            response.xRes,
+            response.yRes
+        );
+
+        console.log(
+            "Snapshot-PNG erstellt:",
+            pngBuffer.length,
+            "Bytes"
+        );
+
+        request.resolve(pngBuffer);
+    } catch (error) {
+        request.reject(error);
+    }
+}
+
+
+// Für den HTTP-Server
+async function onGetMap(body) {
+    const { x, y, width, height } = body;
+
+    if (
+        ![x, y, width, height].every(Number.isFinite) ||
+        width <= 0 ||
+        height <= 0
+    ) {
+        throw new Error(
+            "Ungültiger Snapshot-Ausschnitt."
+        );
+    }
+
+    return requestMapSnapshot({
+        x,
+        y,
+        width,
+        height
+    });
+}
+
 
 // =========================================================
 // HTTP: NEUE DACHFLÄCHE
@@ -478,10 +637,34 @@ async function onSetRoof(body) {
             DESIGN_SUN_ELEVATION_DEG,
         moduleCount:
             layout.modules.length,
-        modules:
-            modulesToWebMercator(
-                layout.modules
-            )
+        
+        modules: modulesToWebMercator(
+            layout.modules
+        ).map((module, index) => ({
+            ...module,
+
+            mountingType:
+                layout.modules[index].mountingType,
+
+            orientationCategory:
+                layout.modules[index].orientationCategory,
+
+            moduleAzimuthDeg:
+                layout.modules[index].moduleAzimuthDeg,
+
+            roofReferenceAzimuthDeg:
+                layout.modules[index].roofReferenceAzimuthDeg,
+
+            rowIndex:
+                layout.modules[index].rowIndex,
+
+            rowPairId:
+                layout.modules[index].rowPairId,
+
+            automaticRowGapM:
+                layout.modules[index].automaticRowGapM
+        }))
+
     };
 }
 
@@ -546,10 +729,34 @@ async function onUpdateRoofDraft(body) {
             DESIGN_SUN_ELEVATION_DEG,
         moduleCount:
             layout.modules.length,
-        modules:
-            modulesToWebMercator(
-                layout.modules
-            )
+
+        modules: modulesToWebMercator(
+            layout.modules
+        ).map((module, index) => ({
+            ...module,
+
+            mountingType:
+                layout.modules[index].mountingType,
+
+            orientationCategory:
+                layout.modules[index].orientationCategory,
+
+            moduleAzimuthDeg:
+                layout.modules[index].moduleAzimuthDeg,
+
+            roofReferenceAzimuthDeg:
+                layout.modules[index].roofReferenceAzimuthDeg,
+
+            rowIndex:
+                layout.modules[index].rowIndex,
+
+            rowPairId:
+                layout.modules[index].rowPairId,
+
+            automaticRowGapM:
+                layout.modules[index].automaticRowGapM
+        }))
+
     };
 }
 
@@ -584,26 +791,33 @@ async function onFinishRoof(body) {
         );
     }
 
-    const modules =
-        draft.modules.map(module => ({
-            id: nextModuleId++,
-            corners: module.corners
-        }));
+    const modules = draft.modules.map(module => ({
+        ...module,
+
+        id: nextModuleId++
+    }));
+
+
 
     sendSetModules(modules);
 
     roofDrafts.delete(draftId);
 
+    
     return {
         success: true,
+
         moduleCount: modules.length,
+
         moduleIds: modules.map(module => module.id),
 
         modules: modules.map(module => ({
-            moduleId: module.id,
-            corners: module.corners
+            ...module,
+
+            moduleId: module.id
         }))
     };
+
 }
 
 // =========================================================
@@ -816,6 +1030,17 @@ covise.on("message", message => {
             );
 
         switch (response.command) {
+            case MSG_GetMap:
+                console.log(
+                    "Snapshot von OpenCOVER empfangen:",
+                    response.xRes,
+                    "x",
+                    response.yRes
+                );
+
+                handleGetMapResponse(response);
+                break;
+
             case MSG_GetHeight:
                 console.log(
                     "Höhenwerte empfangen:",
@@ -885,6 +1110,16 @@ covise.on("close", () => {
     console.log(
         "Warte auf erneute COVISE-Verbindung..."
     );
+
+    if (pendingGetMapRequest) {
+    clearTimeout(pendingGetMapRequest.timeout);
+
+    pendingGetMapRequest.reject(
+        new Error("COVISE-Verbindung unterbrochen.")
+    );
+
+    pendingGetMapRequest = null;
+}
 });
 
 // =========================================================
@@ -1022,7 +1257,8 @@ startHttpServer({
     onDeleteModules,
     onClearModules,
     onLoadProject,
-    onGetBrowserEvents
+    onGetBrowserEvents,
+    onGetMap
 });
 
 // =========================================================
