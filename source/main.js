@@ -9,6 +9,7 @@ import TileLayer from 'ol/layer/Tile.js';
 import VectorLayer from 'ol/layer/Vector.js';
 import ImageLayer from 'ol/layer/Image.js';
 import ImageStatic from 'ol/source/ImageStatic.js';
+import { transformExtent } from 'ol/proj.js';
 
 import OSM from 'ol/source/OSM.js';
 import VectorSource from 'ol/source/Vector.js';
@@ -31,7 +32,7 @@ import { fromLonLat } from 'ol/proj.js';
 // KONFIGURATION
 // =========================================================
 
-const SERVER_URL = 'http://localhost:8080';
+let SERVER_URL = 'http://localhost:8080';
 //const SERVER_URL = "visent.hlrs.de";
 const MIN_DRAW_ZOOM = 18;
 const MIN_MODULE_ZOOM = 16;
@@ -71,6 +72,86 @@ const rowGapOutput =
 
 const loadProjectInput =
     document.getElementById('load-project');
+
+const loadProjectFolderInput =
+    document.getElementById('load-project-folder');
+
+
+const deleteMenuButton =
+    document.getElementById('delete-menu-button');
+
+const deleteMenu =
+    document.getElementById('delete-menu');
+
+const importMenuButton =
+    document.getElementById('import-menu-button');
+
+const importMenu =
+    document.getElementById('import-menu');
+
+const yieldAnalysisButton =
+    document.getElementById('yield-analysis-button');
+
+const settingsButton =
+    document.getElementById('settings-button');
+
+
+const settingsPanel =
+    document.getElementById('settings-panel');
+
+const closeSettingsButton =
+    document.getElementById('close-settings');
+
+
+const serverUrlInput =
+    document.getElementById('server-url-input');
+
+const coviseHostInput =
+    document.getElementById('covise-host-input');
+
+const covisePortInput =
+    document.getElementById('covise-port-input');
+
+const applyConnectionButton =
+    document.getElementById('apply-connection-settings');
+
+const resetConnectionButton =
+    document.getElementById('reset-connection-settings');
+
+const connectionStatusOutput =
+    document.getElementById('connection-status');
+
+
+const availableModuleTypesList =
+    document.getElementById("available-module-types");
+
+const showNewModuleTypeButton =
+    document.getElementById("show-new-module-type");
+
+const newModuleTypeForm =
+    document.getElementById("new-module-type-form");
+
+const newModuleNameInput =
+    document.getElementById("new-module-name");
+
+const newModuleWidthInput =
+    document.getElementById("new-module-width");
+
+const newModuleLengthInput =
+    document.getElementById("new-module-length");
+
+const newModuleModelInput =
+    document.getElementById("new-module-model");
+
+const saveNewModuleTypeButton =
+    document.getElementById("save-new-module-type");
+
+const cancelNewModuleTypeButton =
+    document.getElementById("cancel-new-module-type");
+
+const moduleTypesStatus =
+    document.getElementById("module-types-status");
+
 
 // =========================================================
 // STYLES
@@ -1194,8 +1275,7 @@ function startAreaEditing(feature) {
     editor.hidden = false;
     finishButton.disabled = true;
 
-    placeButton.textContent =
-        'Fläche setzen';
+    placeButton.textContent = '+ Modulplatzierung starten';
 
     updateAreaPreview();
 
@@ -1514,6 +1594,9 @@ async function finishAreaEditing() {
 // =========================================================
 
 function startAreaDrawing() {
+    
+        closeSettingsPanel();
+
     if (
         isEditingArea ||
         map.getView().getZoom() <
@@ -1548,7 +1631,7 @@ function startAreaDrawing() {
     );
 
     placeButton.textContent =
-        'Fläche setzen aktiv';
+        'Modulplatzierung aktiv';
 
     updatePlaceButtonState();
 }
@@ -1983,6 +2066,10 @@ async function deleteSelectedFeatures() {
 
         cleanupModuleAreas();
         updateDownloadLink();
+
+        // Snapshot nach erfolgreicher Löschung aktualisieren
+        scheduleSnapshotRefresh(0);
+
     } catch (error) {
         console.error(
             'Module konnten nicht gelöscht werden:',
@@ -2029,6 +2116,68 @@ function cleanupModuleAreas() {
         });
 }
 
+
+// =========================================================
+// MODULE NACH TCP-RECONNECT WIEDERHERSTELLEN
+// =========================================================
+
+let resyncInProgress = false;
+
+async function resyncModulesToOpenCover(generation) {
+
+    if (resyncInProgress) {
+        return;
+    }
+
+    // Während einer aktiven Dachflächenbearbeitung
+    // keinen unvollständigen Zustand übertragen.
+    if (isEditingArea || isDrawingArea || projectImportRunning) {
+        return;
+    }
+
+    resyncInProgress = true;
+
+    try {
+
+        const modules = drawingSource
+            .getFeatures()
+            .filter(feature =>
+                feature.get("objectType") === "pv-module"
+            )
+            .map(feature => ({
+                id: feature.get("moduleId"),
+                corners: feature.get("corners3D")
+            }));
+
+        console.log(
+            `Synchronisiere ${modules.length} Module mit OpenCOVER.`
+        );
+
+        const result = await postJson(
+            "/resync-modules",
+            {
+                generation,
+                modules
+            }
+        );
+
+        console.log(
+            `${result.moduleCount} Module an MapLink übertragen.`
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Modulsynchronisierung fehlgeschlagen:",
+            error
+        );
+
+    } finally {
+        resyncInProgress = false;
+    }
+}
+
+
 // =========================================================
 // LÖSCHUNGEN AUS 3D SYNCHRONISIEREN
 // =========================================================
@@ -2048,6 +2197,17 @@ async function checkBrowserEvents() {
 
         const data =
             await response.json();
+
+        // Nach einer neuen TCP-Verbindung den
+        // Modulbestand aus OpenLayers erneut übertragen.
+        if (data.resyncRequired === true) {
+
+            await resyncModulesToOpenCover(
+                data.resyncGeneration
+            );
+
+            return;
+        }
 
         const deletedModuleIds =
             data.deletedModuleIds;
@@ -2102,6 +2262,9 @@ async function checkBrowserEvents() {
         cleanupModuleAreas();
         updateDownloadLink();
 
+        // Snapshot nach erfolgreicher Löschung aktualisieren
+        scheduleSnapshotRefresh(0);
+
     } catch (error) {
         console.error(
             '3D-Löschungen konnten nicht synchronisiert werden:',
@@ -2140,6 +2303,10 @@ async function clearAllModules() {
             .clear();
 
         updateDownloadLink();
+
+        // Snapshot nach dem Löschen aller Module aktualisieren
+        scheduleSnapshotRefresh(0);
+
     } catch (error) {
         console.error(
             'Module konnten nicht vollständig gelöscht werden:',
@@ -2156,151 +2323,201 @@ async function clearAllModules() {
 // PROJEKT LADEN
 // =========================================================
 
-async function loadProjectFromFile(file) {
-    if (drawingSource.getFeatures().length > 0) {
+
+async function loadProjectFiles(fileList) {
+
+    const files = Array.from(fileList).filter(file =>
+        /\.(json|geojson)$/i.test(file.name)
+    );
+
+    if (files.length === 0) {
         throw new Error(
-            "Ein Projekt kann nur geladen werden, solange noch keine Module gesetzt wurden."
+            'Keine JSON- oder GeoJSON-Dateien ausgewählt.'
         );
     }
 
-    const text =
-        await file.text();
-
-    const data =
-        JSON.parse(text);
-
-    if (
-        data.type !== 'FeatureCollection' ||
-        !Array.isArray(data.features)
-    ) {
+    if (isEditingArea) {
         throw new Error(
-            'Die ausgewählte Datei ist keine gültige Projektdatei.'
+            'Bitte die aktuelle Dachflächenbearbeitung zuerst abschließen.'
         );
     }
 
-    const modules =
-        data.features.map(item => {
+    if (isDrawingArea) {
+        cancelCurrentInteraction();
+    }
+
+    // Alle Dateien zuerst vollständig einlesen und prüfen.
+    const modules = [];
+
+    for (const [fileIndex, file] of files.entries()) {
+
+        let data;
+
+        try {
+            data = JSON.parse(await file.text());
+        } catch {
+            throw new Error(
+                `Die Datei "${file.name}" enthält kein gültiges JSON.`
+            );
+        }
+
+        if (
+            data.type !== 'FeatureCollection' ||
+            !Array.isArray(data.features)
+        ) {
+            throw new Error(
+                `Die Datei "${file.name}" ist keine gültige Projektdatei.`
+            );
+        }
+
+        for (const [featureIndex, item] of data.features.entries()) {
+
             if (
-                item.type !== 'Feature' ||
+                item?.type !== 'Feature' ||
                 item.geometry?.type !== 'Polygon' ||
-                !Array.isArray(
-                    item.geometry.coordinates
+                !Array.isArray(item.geometry.coordinates) ||
+                !Array.isArray(item.geometry.coordinates[0]) ||
+                item.geometry.coordinates[0].length < 4
+            ) {
+                throw new Error(
+                    `Ungültige Polygongeometrie in "${file.name}", ` +
+                    `Feature ${featureIndex + 1}.`
+                );
+            }
+
+            const properties = item.properties ?? {};
+
+            if (
+                !Number.isInteger(properties.areaId) ||
+                properties.areaId < 1
+            ) {
+                throw new Error(
+                    `Ungültige areaId in "${file.name}", ` +
+                    `Feature ${featureIndex + 1}.`
+                );
+            }
+
+            if (
+                !Array.isArray(properties.corners3D) ||
+                properties.corners3D.length !== 4 ||
+                !properties.corners3D.every(corner =>
+                    corner &&
+                    ['longitude', 'latitude', 'height'].every(key =>
+                        Number.isFinite(corner[key])
+                    )
                 )
             ) {
                 throw new Error(
-                    'Die Projektdatei enthält eine ungültige Modulgeometrie.'
+                    `Ungültige 3D-Eckpunkte in "${file.name}", ` +
+                    `Feature ${featureIndex + 1}.`
                 );
             }
 
-            const ring =
-                item.geometry.coordinates[0];
+            modules.push({
+                moduleId: properties.moduleId,
+                areaId: properties.areaId,
+                corners: properties.corners3D,
 
-            if (
-                !Array.isArray(ring) ||
-                ring.length < 4
-            ) {
-                throw new Error(
-                    'Ein Modul besitzt keine gültige Polygongeometrie.'
-                );
-            }
+                // Eindeutige Kennung innerhalb dieses Imports:
+                // Gleiche areaIds aus verschiedenen Dateien
+                // werden nicht versehentlich zusammengefasst.
+                sourceFileKey: String(fileIndex),
 
-            return {
-                moduleId:
-                    item.properties?.moduleId,
-
-                areaId:
-                    item.properties?.areaId,
-
-                corners:
-                    item.properties?.corners3D,
-
-                featureData:
-                    item
-            };
-        });
-
-    // Erst Server/COVISE synchronisieren.
-    await postJson(
-        '/load-project',
-        {
-            modules
+                featureData: item
+            });
         }
-    );
+    }
+
+    if (modules.length === 0) {
+        throw new Error(
+            'Die ausgewählten Dateien enthalten keine PV-Module.'
+        );
+    }
+
+    // Nur die Daten senden, die der Server benötigt.
+    const result = await postJson('/load-project', {
+        modules: modules.map(module => ({
+            moduleId: module.moduleId,
+            areaId: module.areaId,
+            corners: module.corners,
+            sourceFileKey: module.sourceFileKey
+        }))
+    });
+
+    if (
+        !Array.isArray(result.idAssignments) ||
+        result.idAssignments.length !== modules.length
+    ) {
+        throw new Error(
+            'Der Server hat keine vollständige ID-Zuordnung zurückgegeben.'
+        );
+    }
+
+    // Neue IDs aus der Serverantwort übernehmen.
+    const assignments = new globalThis.Map();
+
+    for (const assignment of result.idAssignments) {
+        if (
+            !Number.isInteger(assignment.index) ||
+            assignment.index < 0 ||
+            assignment.index >= modules.length ||
+            !Number.isInteger(assignment.moduleId) ||
+            !Number.isInteger(assignment.areaId) ||
+            assignments.has(assignment.index)
+        ) {
+            throw new Error(
+                'Die ID-Zuordnung des Servers ist ungültig.'
+            );
+        }
+
+        assignments.set(assignment.index, assignment);
+    }
 
     // Erst nach erfolgreicher Serverantwort
-    // Module im Browser erzeugen.
-    modules.forEach(module => {
-        const item =
-            module.featureData;
+    // die importierten Module in OpenLayers ergänzen.
+    modules.forEach((module, index) => {
 
-        const feature =
-            new Feature({
-                geometry:
-                    new Polygon(
-                        item.geometry.coordinates
-                    )
-            });
+        const item = module.featureData;
+        const assignment = assignments.get(index);
 
-        feature.setProperties({
-            objectType:
-                'pv-module',
+        if (!assignment) {
+            throw new Error(
+                `ID-Zuordnung für Modul ${index} fehlt.`
+            );
+        }
 
-            moduleId:
-                item.properties.moduleId,
-
-            areaId:
-                item.properties.areaId,
-
-            corners3D:
-                item.properties.corners3D,
-
-            moduleType:
-                item.properties.moduleType,
-
-            orientation:
-                item.properties.orientation,
-
-            mountingDirection:
-                item.properties.mountingDirection,
-
-            mountingType:
-                item.properties.mountingType,
-
-            orientationCategory:
-                item.properties.orientationCategory,
-
-            moduleAzimuthDeg:
-                item.properties.moduleAzimuthDeg,
-
-            roofReferenceAzimuthDeg:
-                item.properties.roofReferenceAzimuthDeg,
-
-            rowIndex:
-                item.properties.rowIndex,
-
-            rowPairId:
-                item.properties.rowPairId,
-
-            tiltDeg:
-                item.properties.tiltDeg,
-
-            automaticRowGapM:
-                item.properties.automaticRowGapM,
-
-            roofType:
-                item.properties.roofType,
-
-            roofTiltDeg:
-                item.properties.roofTiltDeg
+        const feature = new Feature({
+            geometry: new Polygon(
+                item.geometry.coordinates
+            )
         });
 
-        drawingSource.addFeature(
-            feature
-        );
+        feature.setProperties({
+            ...item.properties,
+
+            objectType: 'pv-module',
+
+            // Vom Server neu vergebene IDs:
+            moduleId: assignment.moduleId,
+            areaId: assignment.areaId,
+
+            // Bisherige 3D-Geometrie beibehalten:
+            corners3D: module.corners
+        });
+
+        drawingSource.addFeature(feature);
     });
 
     updateDownloadLink();
+
+    console.log(
+        `${modules.length} PV-Module aus ${files.length} ` +
+        `Datei(en) importiert.`
+    );
+
+    // Absichtlich KEIN Snapshot-Refresh beim Laden.
 }
+
 
 // =========================================================
 // DOWNLOAD
@@ -2443,6 +2660,81 @@ function updateDownloadLink() {
         url;
 }
 
+
+ // =========================================================
+ // PROJEKT MIT DATEINAMEN UND SPEICHERORT SPEICHERN
+ // =========================================================
+
+ async function saveProjectAs(event) {
+
+     // Verhindert den bisherigen direkten Download.
+     event.preventDefault();
+
+     try {
+
+         // Die bestehende JSON-Datei aktualisieren.
+         updateDownloadLink();
+
+         const response = await fetch(downloadLink.href);
+         const blob = await response.blob();
+
+         // Speicherdialog für Edge / Chrome
+         if ('showSaveFilePicker' in window) {
+
+             const fileHandle = await window.showSaveFilePicker({
+                 suggestedName: 'PVision_Projekt.json',
+                 types: [
+                     {
+                         description: 'JSON-Projektdatei',
+                         accept: {
+                             'application/json': ['.json']
+                         }
+                     }
+                 ]
+             });
+
+             const writable = await fileHandle.createWritable();
+
+             await writable.write(blob);
+             await writable.close();
+
+             console.log('Projekt erfolgreich gespeichert.');
+
+         } else {
+
+             // Fallback für Browser ohne File System Access API.
+             const link = document.createElement('a');
+
+             link.href = downloadLink.href;
+             link.download = 'PVision_Projekt.json';
+
+             document.body.appendChild(link);
+             link.click();
+             link.remove();
+
+         }
+
+     } catch (error) {
+
+         // Benutzer hat den Speicherdialog abgebrochen.
+         if (error.name === 'AbortError') {
+             return;
+         }
+
+         console.error(
+             'Projekt konnte nicht gespeichert werden:',
+             error
+         );
+
+         alert(
+             `Fehler beim Speichern: ${error.message}`
+         );
+     }
+ }
+
+ downloadLink.addEventListener('click', saveProjectAs);
+
+
 // =========================================================
 // BUTTON-STATUS
 // =========================================================
@@ -2461,8 +2753,8 @@ function updatePlaceButtonState() {
     } else if (!isEditingArea) {
         placeButton.textContent =
             isDrawingArea
-                ? 'Fläche setzen aktiv'
-                : 'Fläche setzen';
+                ? 'Modulplatzierung aktiv'
+                : '+ Modulplatzierung starten';
     }
 }
 
@@ -2557,8 +2849,306 @@ map.getViewport()
     );
 
 // =========================================================
-// BUTTON EVENTS
+// EINSTELLUNGSMENÜ
 // =========================================================
+
+function closeSettingsPanel() {
+    settingsPanel.hidden = true;
+}
+
+
+function toggleSettingsPanel() {
+
+    closeToolMenus();
+
+    // Modulflächen-Editor hat Vorrang
+    if (isEditingArea) {
+        return;
+    }
+
+    // Einstellungsmenü öffnen oder schließen
+    settingsPanel.hidden = !settingsPanel.hidden;
+}
+
+
+settingsButton.addEventListener(
+    'click',
+    toggleSettingsPanel
+);
+
+closeSettingsButton.addEventListener(
+    'click',
+    closeSettingsPanel
+);
+
+
+// =========================================================
+// VERBINDUNGSEINSTELLUNGEN
+// =========================================================
+
+async function applyConnectionSettings() {
+
+    const previousServerUrl = SERVER_URL;
+
+    applyConnectionButton.disabled = true;
+
+    connectionStatusOutput.textContent =
+        'Serververbindung wird geprüft...';
+
+    try {
+        const serverUrl = new URL(
+            serverUrlInput.value.trim()
+        );
+
+        if (
+            !['http:', 'https:'].includes(serverUrl.protocol) ||
+            serverUrl.username ||
+            serverUrl.password ||
+            serverUrl.search ||
+            serverUrl.hash ||
+            serverUrl.pathname !== '/'
+        ) {
+            throw new Error(
+                'Bitte eine gültige HTTP-Serveradresse eingeben.'
+            );
+        }
+
+        const newServerUrl =
+            serverUrl.origin;
+
+        const host =
+            coviseHostInput.value.trim();
+
+        const port =
+            Number(covisePortInput.value);
+
+        if (
+            !host ||
+            !Number.isInteger(port) ||
+            port < 1 ||
+            port > 65535
+        ) {
+            throw new Error(
+                'Ungültiger MapLink-Host oder Port.'
+            );
+        }
+
+        // Zunächst prüfen, ob der Server erreichbar ist.
+        const statusResponse = await fetch(
+            `${newServerUrl}/connection-status`
+        );
+
+        if (!statusResponse.ok) {
+            throw new Error(
+                'Node.js-Server nicht erreichbar.'
+            );
+        }
+
+        const currentStatus =
+            await statusResponse.json();
+
+        // Plugin nur umstellen, falls sich seine
+        // Verbindungseinstellungen tatsächlich ändern.
+        const pluginChanged =
+            currentStatus.coviseHost !== host ||
+            currentStatus.covisePort !== port;
+
+        let result = currentStatus;
+
+        if (pluginChanged) {
+
+            const response = await fetch(
+                `${newServerUrl}/configure-covise`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type':
+                            'application/json'
+                    },
+                    body: JSON.stringify({
+                        host,
+                        port
+                    })
+                }
+            );
+
+            result = await response.json();
+
+            if (!response.ok || result.success === false) {
+                throw new Error(
+                    result.error ||
+                    'MapLink-Konfiguration fehlgeschlagen.'
+                );
+            }
+        }
+
+        // Erst nach erfolgreicher HTTP-Kommunikation
+        // die Serveradresse übernehmen.
+        SERVER_URL = newServerUrl;
+
+        loadModuleTypesFromServer().catch(error => {
+            console.warn("Modultypen konnten nicht geladen werden:", error);
+        });
+
+        connectionStatusOutput.textContent =
+            result.coviseConnected
+                ? 'Node.js-Server erreichbar. MapLink verbunden.'
+                : 'Node.js-Server erreichbar. MapLink-Verbindung noch nicht bereit.';
+
+    } catch (error) {
+
+        SERVER_URL = previousServerUrl;
+
+        connectionStatusOutput.textContent =
+            `Verbindung fehlgeschlagen: ${error.message}`;
+
+        console.error(
+            'Verbindungseinstellungen:',
+            error
+        );
+
+    } finally {
+        applyConnectionButton.disabled = false;
+    }
+}
+
+
+// =========================================================
+// STANDARDWERTE WIEDERHERSTELLEN
+// =========================================================
+
+function resetConnectionSettings() {
+
+    serverUrlInput.value =
+        'http://localhost:8080';
+
+    coviseHostInput.value =
+        '127.0.0.1';
+
+    covisePortInput.value =
+        '31822';
+
+    connectionStatusOutput.textContent =
+        'Standardwerte eingetragen. Zum Übernehmen auf "Verbindung herstellen" klicken.';
+}
+
+
+applyConnectionButton.disabled = false;
+resetConnectionButton.disabled = false;
+
+applyConnectionButton.addEventListener(
+    'click',
+    applyConnectionSettings
+);
+
+resetConnectionButton.addEventListener(
+    'click',
+    resetConnectionSettings
+);
+
+
+
+// =========================================================
+// DROPDOWN-MENÜS
+// =========================================================
+
+// Beide Dropdown-Menüs schließen
+function closeToolMenus() {
+
+    deleteMenu.hidden = true;
+    importMenu.hidden = true;
+
+    deleteMenuButton.setAttribute(
+        'aria-expanded',
+        'false'
+    );
+
+    importMenuButton.setAttribute(
+        'aria-expanded',
+        'false'
+    );
+}
+
+// Löschmenü öffnen bzw. schließen
+deleteMenuButton.addEventListener('click', event => {
+
+    event.stopPropagation();
+
+    const shouldOpen = deleteMenu.hidden;
+
+    closeToolMenus();
+
+    deleteMenu.hidden = !shouldOpen;
+
+    deleteMenuButton.setAttribute(
+        'aria-expanded',
+        String(shouldOpen)
+    );
+});
+
+// Importmenü öffnen bzw. schließen
+importMenuButton.addEventListener('click', event => {
+
+    event.stopPropagation();
+
+    const shouldOpen = importMenu.hidden;
+
+    closeToolMenus();
+
+    importMenu.hidden = !shouldOpen;
+
+    importMenuButton.setAttribute(
+        'aria-expanded',
+        String(shouldOpen)
+    );
+});
+
+// Klick innerhalb des Menüs soll es nicht sofort schließen
+deleteMenu.addEventListener('click', event => {
+    event.stopPropagation();
+});
+
+importMenu.addEventListener('click', event => {
+    event.stopPropagation();
+});
+
+// Löschen auswählen: Menü schließen
+deleteButton.addEventListener('click', closeToolMenus);
+clearButton.addEventListener('click', closeToolMenus);
+
+// Dateiauswahl abgeschlossen: Menü schließen
+loadProjectInput.addEventListener(
+    'change',
+    closeToolMenus
+);
+
+loadProjectFolderInput.addEventListener(
+    'change',
+    closeToolMenus
+);
+
+// Klick außerhalb: beide Menüs schließen
+document.addEventListener('click', event => {
+
+    if (
+        !deleteMenuButton.contains(event.target) &&
+        !deleteMenu.contains(event.target) &&
+        !importMenuButton.contains(event.target) &&
+        !importMenu.contains(event.target)
+    ) {
+        closeToolMenus();
+    }
+});
+
+// Escape: offene Dropdowns schließen
+document.addEventListener('keydown', event => {
+
+    if (event.key === 'Escape') {
+        closeToolMenus();
+        closeSettingsPanel();
+    }
+});
+
 
 placeButton.addEventListener(
     'click',
@@ -2653,32 +3243,246 @@ document.addEventListener(
 // =========================================================
 // JSON Laden
 // =========================================================
+    
+let projectImportRunning = false;
+
+async function handleProjectFileSelection(event) {
+
+    const input = event.target;
+    const files = Array.from(input.files ?? []);
+
+    if (files.length === 0) {
+        return;
+    }
+
+    if (projectImportRunning) {
+        input.value = '';
+        alert('Es läuft bereits ein Projektimport.');
+        return;
+    }
+
+    projectImportRunning = true;
+
+    loadProjectInput.disabled = true;
+    loadProjectFolderInput.disabled = true;
+
+    try {
+        await loadProjectFiles(files);
+    } catch (error) {
+        console.error(
+            'Projektimport fehlgeschlagen:',
+            error
+        );
+
+        alert(
+            `Projektimport fehlgeschlagen: ${error.message}`
+        );
+    } finally {
+        projectImportRunning = false;
+
+        loadProjectInput.disabled = false;
+        loadProjectFolderInput.disabled = false;
+
+        input.value = '';
+    }
+}
+
 loadProjectInput.addEventListener(
     'change',
-    async event => {
-        const file =
-            event.target.files?.[0];
+    handleProjectFileSelection
+);
 
-        if (!file) {
+loadProjectFolderInput.addEventListener(
+    'change',
+    handleProjectFileSelection
+);
+
+
+// =========================================================
+// MODULTYPENVERWALTUNG
+// =========================================================
+
+async function loadModuleTypesFromServer() {
+
+    const response = await fetch(
+        `${SERVER_URL}/module-types`
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            "Modultypen konnten nicht geladen werden."
+        );
+    }
+
+    const result = await response.json();
+
+    if (
+        !Array.isArray(result.moduleTypes) ||
+        result.moduleTypes.length === 0 ||
+        !result.moduleTypes.every(type =>
+            type &&
+            typeof type.id === "string" &&
+            typeof type.name === "string" &&
+            Number.isFinite(type.width) &&
+            Number.isFinite(type.length)
+        )
+    ) {
+        throw new Error(
+            "Ungültige Modultypen-Antwort."
+        );
+    }
+
+    const previousSelection = moduleTypeInput.value;
+
+    // Modulformat-Auswahl neu befüllen
+    moduleTypeInput.replaceChildren();
+
+    // Liste im Einstellungsmenü aktualisieren
+    availableModuleTypesList.replaceChildren();
+
+    for (const type of result.moduleTypes) {
+
+        const label =
+            `${type.name} – ` +
+            `${type.length.toFixed(3)} × ` +
+            `${type.width.toFixed(3)} m`;
+
+        const option = document.createElement("option");
+
+        option.value = type.id;
+        option.textContent = label;
+
+        moduleTypeInput.appendChild(option);
+
+        const item = document.createElement("li");
+
+        item.textContent = `${label} (${type.model || "kein OBJ"})`;
+
+        availableModuleTypesList.appendChild(item);
+    }
+
+    // Vorherige Auswahl erhalten
+    if (
+        Array.from(moduleTypeInput.options).some(
+            option => option.value === previousSelection
+        )
+    ) {
+        moduleTypeInput.value = previousSelection;
+    }
+}
+
+
+// Formular anzeigen
+showNewModuleTypeButton.addEventListener(
+    "click",
+    () => {
+        newModuleTypeForm.hidden = false;
+        showNewModuleTypeButton.hidden = true;
+    }
+);
+
+
+// Formular schließen
+cancelNewModuleTypeButton.addEventListener(
+    "click",
+    () => {
+        newModuleTypeForm.hidden = true;
+        showNewModuleTypeButton.hidden = false;
+    }
+);
+
+
+// Neuen Modultyp speichern
+saveNewModuleTypeButton.addEventListener(
+    "click",
+    async () => {
+
+        if (isEditingArea) {
+            moduleTypesStatus.textContent =
+                "Bitte zuerst die aktuelle Modulfläche abschließen.";
             return;
         }
 
+        const name = newModuleNameInput.value.trim();
+
+        const width = Number(newModuleWidthInput.value);
+        const length = Number(newModuleLengthInput.value);
+
+        const model = newModuleModelInput.value.trim();
+
+        if (
+            !name ||
+            !newModuleWidthInput.value.trim() ||
+            !newModuleLengthInput.value.trim() ||
+            !Number.isFinite(width) ||
+            !Number.isFinite(length) ||
+            width <= 0 ||
+            length <= 0 ||
+            !model
+        ) {
+            moduleTypesStatus.textContent =
+                "Bitte alle Felder gültig ausfüllen.";
+            return;
+        }
+
+        saveNewModuleTypeButton.disabled = true;
+        moduleTypesStatus.textContent =
+            "Modultyp wird gespeichert...";
+
         try {
-            await loadProjectFromFile(file);
+            const response = await fetch(
+                `${SERVER_URL}/module-types`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        name,
+                        width,
+                        length,
+                        model
+                    })
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok || result.success === false) {
+                throw new Error(
+                    result.error || "Speichern fehlgeschlagen."
+                );
+            }
+
+            await loadModuleTypesFromServer();
+
+            newModuleNameInput.value = "";
+            newModuleWidthInput.value = "";
+            newModuleLengthInput.value = "";
+            newModuleModelInput.value = "";
+
+            newModuleTypeForm.hidden = true;
+            showNewModuleTypeButton.hidden = false;
+
+            moduleTypesStatus.textContent =
+                "Modultyp erfolgreich hinzugefügt.";
+
         } catch (error) {
+
+            moduleTypesStatus.textContent =
+                `Fehler: ${error.message}`;
+
             console.error(
-                'Projekt konnte nicht geladen werden:',
+                "Modultyp konnte nicht gespeichert werden:",
                 error
             );
 
-            alert(
-                `Projekt konnte nicht geladen werden: ${error.message}`
-            );
         } finally {
-            event.target.value = '';
+            saveNewModuleTypeButton.disabled = false;
         }
     }
 );
+
 
 // =========================================================
 // INITIALISIERUNG
@@ -2696,116 +3500,244 @@ rowGapSection.hidden =
 updateDownloadLink();
 updatePlaceButtonState();
 
+loadModuleTypesFromServer().catch(error => {
+    console.warn(
+        "Modultypen konnten nicht geladen werden:",
+        error.message
+    );
+});
+
 
 
 
 // =========================================================
-// OPENCOVER-SNAPSHOT ALS OPENLAYERS-EBENE
+// OPENCOVER-SNAPSHOT: EREIGNISGESTEUERTE AKTUALISIERUNG
 // =========================================================
 
 let currentSnapshotUrl = null;
 let snapshotRequestRunning = false;
+let snapshotRefreshPending = false;
+let snapshotRefreshTimer = null;
+let snapshotRequestVersion = 0;
 
-async function updateSnapshotLayer() {
-    const zoom = map.getView().getZoom();
+// Keine Snapshot-Anforderung bei Modulplatzierung, Vorschau
+// oder Laden einer Projektdatei.
+// Nur Kartenbewegung/Zoom und abgeschlossene Loeschungen
+// rufen scheduleSnapshotRefresh() auf.
 
-    // Unterhalb des Schwellwerts deaktivieren
-    if (zoom < MIN_SNAPSHOT_ZOOM) {
-        snapshotLayer.setVisible(false);
+function hideSnapshotBelowMinimumZoom() {
+    if (map.getView().getZoom() >= MIN_SNAPSHOT_ZOOM) {
         return;
     }
 
-    if (snapshotRequestRunning) {
+    ++snapshotRequestVersion;
+    snapshotRefreshPending = false;
+
+    if (snapshotRefreshTimer !== null) {
+        clearTimeout(snapshotRefreshTimer);
+        snapshotRefreshTimer = null;
+    }
+
+    snapshotLayer.setVisible(false);
+}
+
+function scheduleSnapshotRefresh(delayMs = 150) {
+    if (map.getView().getZoom() < MIN_SNAPSHOT_ZOOM) {
+        hideSnapshotBelowMinimumZoom();
+        return;
+    }
+
+    // Laufende Antworten werden dadurch als veraltet markiert.
+    ++snapshotRequestVersion;
+    snapshotRefreshPending = true;
+
+    if (snapshotRefreshTimer !== null) {
+        clearTimeout(snapshotRefreshTimer);
+    }
+
+    // Debouncing bei dicht aufeinanderfolgenden Ereignissen.
+    snapshotRefreshTimer = setTimeout(() => {
+        snapshotRefreshTimer = null;
+        void processPendingSnapshotRequests();
+    }, delayMs);
+}
+
+async function processPendingSnapshotRequests() {
+    if (snapshotRequestRunning || !snapshotRefreshPending) {
         return;
     }
 
     snapshotRequestRunning = true;
 
     try {
-        // Aktuell sichtbarer OpenLayers-Bereich
-        const mapExtent = map.getView().calculateExtent(
-            map.getSize()
-        );
+        // Immer nur eine Anfrage gleichzeitig.
+        // Bei Aenderungen waehrend einer Anfrage wird
+        // anschliessend ein neuer Snapshot angefordert.
+        while (
+            snapshotRefreshPending &&
+            map.getView().getZoom() >= MIN_SNAPSHOT_ZOOM
+        ) {
+            snapshotRefreshPending = false;
 
-        // VORLAEUFIGER TESTAUSSCHNITT
-        // Im OpenCOVER-Projektraum.
-        // Die korrekte Umrechnung des mapExtent
-        // erfolgt im naechsten Schritt.
-        const snapshotRequest = {
-            x: 100,
-            y: 60,
-            width: 80,
-            height: 60
-        };
+            const requestVersion = snapshotRequestVersion;
 
-        const response = await fetch(
-            `${SERVER_URL}/get-map`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type':
-                        'application/json'
-                },
-                body: JSON.stringify(
-                    snapshotRequest
-                )
+            try {
+                await fetchSnapshotForCurrentExtent(requestVersion);
+            } catch (error) {
+                console.error('Snapshot-Fehler:', error);
+
+                if (requestVersion === snapshotRequestVersion) {
+                    snapshotLayer.setVisible(false);
+                }
             }
-        );
-
-        if (!response.ok) {
-            throw new Error(
-                `Snapshot-HTTP-Fehler: ${response.status}`
-            );
         }
-
-        const imageBlob = await response.blob();
-
-        const imageUrl = URL.createObjectURL(
-            imageBlob
-        );
-
-        // Bild unmittelbar als Kartenebene anzeigen
-        const imageSource = new ImageStatic({
-            url: imageUrl,
-            imageExtent: mapExtent,
-            projection:
-                map.getView().getProjection()
-        });
-
-        snapshotLayer.setSource(imageSource);
-
-        if (currentSnapshotUrl) {
-            URL.revokeObjectURL(
-                currentSnapshotUrl
-            );
-        }
-
-        currentSnapshotUrl = imageUrl;
-
-        snapshotLayer.setVisible(
-            map.getView().getZoom() >=
-                MIN_SNAPSHOT_ZOOM
-        );
-
-        console.log(
-            "OpenCOVER-Snapshot in Karte eingefügt."
-        );
-
-    } catch (error) {
-        console.error(
-            "Snapshot konnte nicht geladen werden:",
-            error
-        );
-
-        snapshotLayer.setVisible(false);
-
     } finally {
         snapshotRequestRunning = false;
     }
 }
 
+async function fetchSnapshotForCurrentExtent(requestVersion) {
 
-// Taste M: Snapshot auf der Karte anzeigen
+    // Sichtbarer Bereich in EPSG:3857
+    const extent = map.getView().calculateExtent(
+        map.getSize()
+    );
+
+    const centerX = (extent[0] + extent[2]) / 2;
+    const centerY = (extent[1] + extent[3]) / 2;
+
+    let extentWidth = extent[2] - extent[0];
+    let extentHeight = extent[3] - extent[1];
+
+    // Seitenverhaeltnis des bestehenden C++-Renderbuffers
+    const snapshotAspect = 1024 / 768;
+
+    if (extentWidth / extentHeight > snapshotAspect) {
+        extentHeight = extentWidth / snapshotAspect;
+    } else {
+        extentWidth = extentHeight * snapshotAspect;
+    }
+
+    const snapshotExtent3857 = [
+        centerX - extentWidth / 2,
+        centerY - extentHeight / 2,
+        centerX + extentWidth / 2,
+        centerY + extentHeight / 2
+    ];
+
+    // EPSG:3857 -> EPSG:4326
+    const geoExtent = transformExtent(
+        snapshotExtent3857,
+        'EPSG:3857',
+        'EPSG:4326'
+    );
+
+    const snapshotRequest = {
+        minLon: geoExtent[0],
+        minLat: geoExtent[1],
+        maxLon: geoExtent[2],
+        maxLat: geoExtent[3]
+    };
+
+    console.log(
+        'Snapshot-Anfrage:',
+        snapshotRequest
+    );
+
+    // Anfrage an den bestehenden Node.js-Server
+    const response = await fetch(
+        `${SERVER_URL}/get-map`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(snapshotRequest)
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            `Snapshot-HTTP-Fehler: ${response.status}`
+        );
+    }
+
+    const imageBlob = await response.blob();
+
+    // Veraltete Snapshots nicht mehr anzeigen
+    if (
+        requestVersion !== snapshotRequestVersion ||
+        map.getView().getZoom() < MIN_SNAPSHOT_ZOOM
+    ) {
+        return;
+    }
+
+    const imageUrl = URL.createObjectURL(imageBlob);
+
+    const imageSource = new ImageStatic({
+        url: imageUrl,
+        imageExtent: snapshotExtent3857,
+        projection: map.getView().getProjection()
+    });
+
+    snapshotLayer.setSource(imageSource);
+    snapshotLayer.setVisible(true);
+
+    if (currentSnapshotUrl) {
+        URL.revokeObjectURL(currentSnapshotUrl);
+    }
+
+    currentSnapshotUrl = imageUrl;
+
+    console.log(
+        'OpenCOVER-Snapshot aktualisiert.'
+    );
+}
+
+// =========================================================
+// SNAPSHOT MANUELL AKTUALISIEREN
+// =========================================================
+
+function updateSnapshotLayer() {
+    scheduleSnapshotRefresh(0);
+}
+
+// =========================================================
+// SNAPSHOT BEI KARTENBEWEGUNG UND ZOOM
+// =========================================================
+
+// Sobald eine Kartenbewegung beginnt, ist ein eventuell
+// laufender Snapshot nicht mehr aktuell.
+map.on('movestart', () => {
+    ++snapshotRequestVersion;
+});
+
+// Erst nach Abschluss des Verschiebens oder Zoomens
+// wird ein neuer Snapshot angefordert.
+map.on('moveend', () => {
+    scheduleSnapshotRefresh(150);
+});
+
+// =========================================================
+// SNAPSHOT BEIM HERAUSZOOMEN AUSBLENDEN
+// =========================================================
+
+map.getView().on(
+    'change:resolution',
+    () => {
+        if (
+            map.getView().getZoom() <
+            MIN_SNAPSHOT_ZOOM
+        ) {
+            hideSnapshotBelowMinimumZoom();
+        }
+    }
+);
+
+// =========================================================
+// TASTE M: SNAPSHOT MANUELL AKTUALISIEREN
+// =========================================================
+
 document.addEventListener(
     'keydown',
     event => {
@@ -2821,16 +3753,14 @@ document.addEventListener(
     }
 );
 
+// =========================================================
+// LAYER-REIHENFOLGE
+// =========================================================
 
-// Beim Herauszoomen Snapshot ausblenden
-map.getView().on(
-    'change:resolution',
-    () => {
-        if (
-            map.getView().getZoom() <
-            MIN_SNAPSHOT_ZOOM
-        ) {
-            snapshotLayer.setVisible(false);
-        }
-    }
-);
+snapshotLayer.setZIndex(1);
+
+moduleAreaLayer.setZIndex(10);
+drawingLayer.setZIndex(20);
+previewLayer.setZIndex(30);
+selectionBoxLayer.setZIndex(40);
+

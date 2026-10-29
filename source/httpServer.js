@@ -87,13 +87,18 @@ function startHttpServer({
     port,
     onSetRoof,
     onUpdateRoofDraft,
+    onResyncModules,
     onFinishRoof,
     onCancelRoof,
     onDeleteModules,
     onClearModules,
     onLoadProject,
     onGetBrowserEvents,
-    onGetMap
+    onGetMap,
+    onGetConnectionStatus,
+    onConfigureCovise,
+    onGetModuleTypes,
+    onAddModuleType
 }) {
     const server = http.createServer(
         async (req, res) => {
@@ -106,6 +111,148 @@ function startHttpServer({
             }
 
             try {
+
+                
+                // =========================================================
+                // MODULE AUS OPENLAYERS WIEDERHERSTELLEN
+                // =========================================================
+
+                if (
+                    req.method === "POST" &&
+                    req.url === "/resync-modules"
+                ) {
+                    const body = await readJsonBody(req);
+
+                    const result = await onResyncModules(body);
+
+                    sendJson(res, 200, {
+                        success: true,
+                        ...result
+                    });
+
+                    return;
+                }
+
+                
+                
+                // =========================================
+                // MODULTYPEN ABRUFEN
+                // =========================================
+
+                if (
+                    req.method === "GET" &&
+                    req.url === "/module-types"
+                ) {
+                    const result = await onGetModuleTypes();
+
+                    sendJson(res, 200, {
+                        success: true,
+                        ...result
+                    });
+
+                    return;
+                }
+
+                // =========================================
+                // NEUEN MODULTYP HINZUFÜGEN
+                // =========================================
+
+                if (
+                    req.method === "POST" &&
+                    req.url === "/module-types"
+                ) {
+                    // Vorläufig nur lokale Administration
+                    const isLocal = [
+                        "127.0.0.1",
+                        "::1",
+                        "::ffff:127.0.0.1"
+                    ].includes(req.socket.remoteAddress);
+
+                    if (!isLocal) {
+                        sendJson(res, 403, {
+                            success: false,
+                            error:
+                                "Modultypen dürfen derzeit nur lokal hinzugefügt werden."
+                        });
+                        return;
+                    }
+
+                    const body = await readJsonBody(req);
+
+                    const result = await onAddModuleType(body);
+
+                    sendJson(res, 200, {
+                        success: true,
+                        ...result
+                    });
+
+                    return;
+                }
+
+
+                // =========================================
+                // VERBINDUNGSSTATUS ABFRAGEN
+                // =========================================
+
+                if (
+                    req.method === "GET" &&
+                    req.url === "/connection-status"
+                ) {
+                    const result =
+                        await onGetConnectionStatus();
+
+                    sendJson(res, 200, {
+                        success: true,
+                        ...result
+                    });
+
+                    return;
+                }
+
+                // =========================================
+                // MAPLINK-VERBINDUNG KONFIGURIEREN
+                // =========================================
+
+                if (
+                    req.method === "POST" &&
+                    req.url === "/configure-covise"
+                ) {
+                    // Vorläufig nur lokale Administration.
+                    const address =
+                        req.socket.remoteAddress;
+
+                    const isLocal = [
+                        "127.0.0.1",
+                        "::1",
+                        "::ffff:127.0.0.1"
+                    ].includes(address);
+
+                    if (!isLocal) {
+                        sendJson(res, 403, {
+                            success: false,
+                            error:
+                                "Verbindungseinstellungen können derzeit nur lokal geändert werden."
+                        });
+
+                        return;
+                    }
+
+                    const body = await readJsonBody(req);
+
+                    const result =
+                        await onConfigureCovise(body);
+
+                    sendJson(res, 200, {
+                        success: true,
+                        ...result
+                    });
+
+                    return;
+                }
+
+
+
+
                 if (req.method === "GET" &&
                     req.url === "/browser-events"
                 ) {

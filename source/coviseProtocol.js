@@ -23,6 +23,7 @@ const MSG_SetModules = 502;
 const MSG_DeleteModules = 503;
 const MSG_ClearAllModules = 504;
 const MSG_DeleteModuleRequest = 505;
+const MSG_ProjectTransformReady = 506;
 
 
 // ---------------------------------------------------------
@@ -220,75 +221,66 @@ function createGetHeightMessage(points) {
  * width, height: Ausdehnung in diesem Koordinatensystem
  * xRes, yRes: Bildauflösung in Pixeln
  */
+
 function createGetMapMessage({
-    x,
-    y,
-    width,
-    height,
-    xRes = 1024,
-    yRes = 768
+    minLon,
+    minLat,
+    maxLon,
+    maxLat
 }) {
-    const values = [x, y, width, height];
-
     if (
-        !values.every(Number.isFinite) ||
-        width <= 0 ||
-        height <= 0
+        ![
+            minLon,
+            minLat,
+            maxLon,
+            maxLat
+        ].every(Number.isFinite) ||
+        minLon >= maxLon ||
+        minLat >= maxLat
     ) {
         throw new Error(
-            "Ungültiger Kartenausschnitt für MSG_GetMap."
+            "Ungültiger geografischer Snapshot-Bereich."
         );
     }
 
-    if (
-        !Number.isInteger(xRes) ||
-        !Number.isInteger(yRes) ||
-        xRes <= 0 ||
-        yRes <= 0
-    ) {
-        throw new Error(
-            "Ungültige Snapshot-Auflösung."
-        );
-    }
+    // Feste Auflösung des vorhandenen C++-Bildpuffers
+    const xRes = 1024;
+    const yRes = 768;
 
     const payload = Buffer.alloc(
-        1 + 5 + 4 * 5 + 2 * 5
+        1 + 4 * 5 + 2 * 5 + 5
     );
 
     let offset = 0;
 
-    payload.writeUInt8(1, offset);
-    offset += 1;
+    payload.writeUInt8(1, offset++);
 
     offset = writeTbInt32(
-        payload,
-        MSG_GetMap,
-        offset
+        payload, MSG_GetMap, offset
     );
 
-    // Die C++-Funktion verwendet float.
-    for (const value of values) {
+    for (const value of [
+        minLon,
+        minLat,
+        maxLon,
+        maxLat
+    ]) {
         offset = writeTbFloat(
-            payload,
-            value,
-            offset
+            payload, value, offset
         );
     }
 
     offset = writeTbInt32(
-        payload,
-        xRes,
-        offset
+        payload, xRes, offset
     );
 
     offset = writeTbInt32(
-        payload,
-        yRes,
-        offset
+        payload, yRes, offset
     );
 
     return buildCoviseMessage(payload);
 }
+
 
 
 
@@ -775,6 +767,21 @@ function parseMapLinkPayload(payload) {
     }
 
     // -----------------------------------------------------
+    // MSG_ProjectTransformReady
+    // -----------------------------------------------------
+    // MapLink -> Node.js:
+    // Der Projektursprung wurde gesetzt.
+    // Die Modulsynchronisierung darf gestartet werden.
+    // -----------------------------------------------------
+
+    if (command === MSG_ProjectTransformReady) {
+        return {
+            controlByte,
+            command
+        };
+    }
+
+    // -----------------------------------------------------
     // Unbekannte / noch nicht behandelte Antwort
     // -----------------------------------------------------
 
@@ -796,6 +803,7 @@ module.exports = {
     MSG_DeleteModules,
     MSG_ClearAllModules,
     MSG_DeleteModuleRequest,
+    MSG_ProjectTransformReady,
 
     COVISE_MAPLINK_MESSAGE_TYPE,
 

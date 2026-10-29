@@ -1,0 +1,20 @@
+{
+  "compact": {
+    "name": "Kleinformat",
+    "width": 1.134,
+    "length": 1.76,
+    "model": "PV_kompakt_hoch.obj"
+  },
+  "large": {
+    "name": "Großformat",
+    "width": 1.134,
+    "length": 2.384,
+    "model": "PV_gross_hoch.obj"
+  },
+  "module_premium": {
+    "name": "Premium",
+    "width": 1.13,
+    "length": 7.01,
+    "model": "PV_kompakt_hoch.obj"
+  }
+}

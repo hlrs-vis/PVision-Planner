@@ -5,6 +5,8 @@ const { startHttpServer } = require("./httpServer");
 const { CoviseConnection } = require("./coviseConnection");
 
 const { PNG } = require("pngjs");
+const fs = require("fs");
+const path = require("path");
 
 const {
     MSG_GetHeight,
@@ -12,12 +14,13 @@ const {
     COVISE_MAPLINK_MESSAGE_TYPE,
     MSG_DeleteModuleRequest,
     MSG_GetMap,
+    MSG_ProjectTransformReady,
     createGetHeightMessage,
     createSetModulesMessage,
     createDeleteModulesMessage,
     createClearAllModulesMessage,
     parseMapLinkPayload,
-    createGetMapMessage
+    createGetMapMessage,
 } = require("./coviseProtocol");
 
 const {
@@ -46,19 +49,158 @@ const COVISE_RECONNECT_MS = 2000;
 const HTTP_PORT = 8080;
 
 const FLAT_ROOF_LIMIT_DEG = 5;
-const ROOF_PLANARITY_TOLERANCE_M = 0.05;
+const ROOF_PLANARITY_TOLERANCE_M = 0.5;
 const DESIGN_SUN_ELEVATION_DEG = 18;
 
-const MODULE_TYPES = {
-    compact: {
-        width: 1.134,
-        length: 1.760
-    },
-    large: {
-        width: 1.134,
-        length: 2.384
+
+const MODULE_TYPES_FILE = path.join(
+    __dirname,
+    "module-types.json"
+);
+
+function readModuleTypes() {
+    const data = JSON.parse(
+        fs.readFileSync(MODULE_TYPES_FILE, "utf8")
+    );
+
+    if (
+        !data ||
+        typeof data !== "object" ||
+        Array.isArray(data)
+    ) {
+        throw new Error(
+            "module-types.json muss ein JSON-Objekt enthalten."
+        );
     }
-};
+
+    return data;
+}
+
+const MODULE_TYPES = readModuleTypes();
+
+
+// =========================================================
+// MODULTYPEN VERWALTEN
+// =========================================================
+
+function getModuleTypesList() {
+    return Object.entries(MODULE_TYPES).map(
+        ([id, type]) => ({
+            id,
+            name: type.name,
+            width: type.width,
+            length: type.length,
+            model: type.model
+        })
+    );
+}
+
+async function onGetModuleTypes() {
+    return {
+        moduleTypes: getModuleTypesList()
+    };
+}
+
+async function onAddModuleType(body) {
+    const name = body?.name?.trim();
+    const width = body?.width;
+    const length = body?.length;
+    const model = body?.model?.trim();
+
+    if (
+        typeof name !== "string" ||
+        name.length < 1 ||
+        name.length > 100
+    ) {
+        throw new Error("Ungültige Modulbezeichnung.");
+    }
+
+    if (
+        !Number.isFinite(width) ||
+        !Number.isFinite(length) ||
+        width <= 0 ||
+        length <= 0 ||
+        width > 10 ||
+        length > 10
+    ) {
+        throw new Error("Ungültige Modulabmessungen.");
+    }
+
+    // Nur ein einfacher OBJ-Dateiname, kein Dateipfad.
+    if (
+        typeof model !== "string" ||
+        !/^[a-zA-Z0-9_.-]+\.obj$/i.test(model) ||
+        model.length > 150
+    ) {
+        throw new Error(
+            "Bitte einen gültigen OBJ-Dateinamen angeben."
+        );
+    }
+
+    // Eindeutige, gut lesbare Kennung erzeugen
+    const baseId = name
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/ß/g, "ss")
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 40);
+
+    if (!baseId) {
+        throw new Error(
+            "Die Bezeichnung muss Buchstaben oder Zahlen enthalten."
+        );
+    }
+
+    let id = `module_${baseId}`;
+    let counter = 2;
+
+    while (Object.hasOwn(MODULE_TYPES, id)) {
+        id = `module_${baseId}_${counter++}`;
+    }
+
+    const newType = {
+        name,
+        width,
+        length,
+        model
+    };
+
+    const updated = {
+        ...MODULE_TYPES,
+        [id]: newType
+    };
+
+    // Erst speichern, dann in den aktiven Zustand übernehmen
+    const tempFile = MODULE_TYPES_FILE + ".tmp";
+
+    try {
+        fs.writeFileSync(
+            tempFile,
+            JSON.stringify(updated, null, 2),
+            "utf8"
+        );
+
+        fs.renameSync(tempFile, MODULE_TYPES_FILE);
+    } catch (error) {
+        try {
+            if (fs.existsSync(tempFile)) {
+                fs.unlinkSync(tempFile);
+            }
+        } catch {}
+
+        throw error;
+    }
+
+    MODULE_TYPES[id] = newType;
+
+    return {
+        addedId: id,
+        moduleTypes: getModuleTypesList()
+    };
+}
+
 
 const VALID_MOUNTING_DIRECTIONS = new Set([
     "positive-v",
@@ -100,6 +242,13 @@ let nextRoofDraftId = 1;
 // Modul-IDs, die im 3D gelöscht wurden und
 // noch an den Browser gemeldet werden müssen.
 const pendingDeletedModuleIds = [];
+
+// =========================================================
+// MODULSYNCHRONISIERUNG NACH TCP-RECONNECT
+// =========================================================
+
+let resyncGeneration = 0;
+let completedResyncGeneration = 0;
 
 // =========================================================
 // COVISE-VERBINDUNG
@@ -145,6 +294,7 @@ function determineRoofType(roofTiltDeg) {
 }
 
 
+
 function validateRoofPlanarity(roofPointsLocal, roofPlane) {
     const planarity = checkRoofPlanarity(
         roofPointsLocal,
@@ -159,16 +309,16 @@ function validateRoofPlanarity(roofPointsLocal, roofPlane) {
     );
 
     if (!planarity.isPlanar) {
-        throw new Error(
-            "Die ausgewählte Dachfläche ist nicht ausreichend eben. " +
-            `Maximale Abweichung: ${
-                planarity.maxDeviation.toFixed(3)
-            } m`
+        console.warn(
+            "Warnung: Der vierte Dachpunkt weicht " +
+            "von der Ebene der ersten drei Punkte ab.",
+            `Maximale Abweichung: ${planarity.maxDeviation.toFixed(3)} m`
         );
     }
 
     return planarity;
 }
+
 
 function calculateModulesForDraft(
     draft,
@@ -354,13 +504,21 @@ function handleGetHeightResponse(heights) {
         return;
     }
 
-    if (!heights.every(Number.isFinite)) {
+    // Für die Dachebene müssen die ersten drei Höhen gültig sein.
+    // Der vierte Höhenwert ist nur für die Kontrollprüfung nötig.
+    if (!heights.slice(0, 3).every(Number.isFinite)) {
         request.reject(
             new Error(
-                "Höhenantwort enthält ungültige Werte."
+                "Mindestens einer der ersten drei Dachpunkte besitzt keinen gültigen Höhenwert."
             )
         );
         return;
+    }
+
+    if (heights.length === 4 && !Number.isFinite(heights[3])) {
+        console.warn(
+            "Warnung: Für den vierten Dachpunkt liegt kein gültiger Höhenwert vor."
+        );
     }
 
     request.resolve(heights);
@@ -401,11 +559,12 @@ function rgbaToPng(imageData, width, height) {
 }
 
 
+
 function requestMapSnapshot({
-    x,
-    y,
-    width,
-    height
+    minLon,
+    minLat,
+    maxLon,
+    maxLat
 }) {
     if (pendingGetMapRequest) {
         return Promise.reject(
@@ -433,12 +592,10 @@ function requestMapSnapshot({
         try {
             covise.send(
                 createGetMapMessage({
-                    x,
-                    y,
-                    width,
-                    height,
-                    xRes: 1024,
-                    yRes: 768
+                    minLon,
+                    minLat,
+                    maxLon,
+                    maxLat
                 })
             );
         } catch (error) {
@@ -448,6 +605,7 @@ function requestMapSnapshot({
         }
     });
 }
+
 
 
 function handleGetMapResponse(response) {
@@ -484,24 +642,35 @@ function handleGetMapResponse(response) {
 
 
 // Für den HTTP-Server
+
 async function onGetMap(body) {
-    const { x, y, width, height } = body;
+    const {
+        minLon,
+        minLat,
+        maxLon,
+        maxLat
+    } = body;
 
     if (
-        ![x, y, width, height].every(Number.isFinite) ||
-        width <= 0 ||
-        height <= 0
+        ![
+            minLon,
+            minLat,
+            maxLon,
+            maxLat
+        ].every(Number.isFinite) ||
+        minLon >= maxLon ||
+        minLat >= maxLat
     ) {
         throw new Error(
-            "Ungültiger Snapshot-Ausschnitt."
+            "Ungültiger geografischer Kartenausschnitt."
         );
     }
 
     return requestMapSnapshot({
-        x,
-        y,
-        width,
-        height
+        minLon,
+        minLat,
+        maxLon,
+        maxLat
     });
 }
 
@@ -532,6 +701,7 @@ async function onSetRoof(body) {
         webMercatorPointsToLonLat(points);
 
     const heights = await requestHeights(roofPoints);
+    const effectiveHeights = [...heights];
 
     if (
         !Array.isArray(heights) ||
@@ -593,7 +763,7 @@ async function onSetRoof(body) {
         roofPointsLocal,
         planePointsLocal,
         layoutPointsLocal,
-        heights,
+        heights: effectiveHeights,
         roofPlane,
         planarity,
         roofTiltDeg,
@@ -846,82 +1016,125 @@ async function onCancelRoof(body) {
 // HTTP: PROJEKT LADEN
 // =========================================================
 
+
 async function onLoadProject(body) {
-    const { modules } = body;
+    const { modules } = body ?? {};
 
     if (!Array.isArray(modules)) {
         throw new Error(
-            "Ungültige Projektdatei: Module fehlen."
+            "Ungültiger Import: Module fehlen."
         );
     }
 
+    // Eine leere Datei darf vorhandene Module nicht löschen.
     if (modules.length === 0) {
-        nextModuleId = 1001;
-        nextRoofDraftId = 1;
-
         return {
             success: true,
             moduleCount: 0,
-            nextModuleId
+            idAssignments: [],
+            nextModuleId,
+            nextAreaId: nextRoofDraftId
         };
     }
 
-    const moduleIds = modules.map(
-        module => module.moduleId
-    );
-
-    if (!moduleIds.every(Number.isInteger)) {
-        throw new Error(
-            "Ungültige Projektdatei: Modul-IDs fehlen oder sind ungültig."
-        );
-    }
-
-    if (new Set(moduleIds).size !== moduleIds.length) {
-        throw new Error(
-            "Ungültige Projektdatei: Modul-IDs sind nicht eindeutig."
-        );
-    }
-
-    const coviseModules = modules.map(module => {
-        if (
-            !Array.isArray(module.corners) ||
-            module.corners.length !== 4
-        ) {
+    // Erst alle Daten prüfen, bevor wir COVISE verändern.
+    modules.forEach((module, index) => {
+        if (!module || typeof module !== "object") {
             throw new Error(
-                `Modul ${module.moduleId} besitzt keine gültigen Eckpunkte.`
+                `Modul an Position ${index} ist ungültig.`
             );
         }
 
-        return {
-            id: module.moduleId,
-            corners: module.corners
-        };
+        if (
+            !Number.isInteger(module.areaId) ||
+            module.areaId < 1
+        ) {
+            throw new Error(
+                `Modul an Position ${index} besitzt keine gültige areaId.`
+            );
+        }
+
+        if (
+            !Array.isArray(module.corners) ||
+            module.corners.length !== 4 ||
+            !module.corners.every(corner =>
+                corner &&
+                ["longitude", "latitude", "height"].every(
+                    key => Number.isFinite(corner[key])
+                )
+            )
+        ) {
+            throw new Error(
+                `Modul an Position ${index} besitzt keine gültigen 3D-Eckpunkte.`
+            );
+        }
     });
 
-    const areaIds = modules.map(module => module.areaId).filter(Number.isInteger);
+    // Lokale Zähler: Erst nach erfolgreichem
+    // Absenden der COVISE-Nachricht übernehmen.
+    let newNextModuleId = nextModuleId;
+    let newNextAreaId = nextRoofDraftId;
 
-    if (areaIds.length > 0) {
-        nextRoofDraftId =
-            Math.max(...areaIds) + 1;
-    }
+    // Eine Dachfläche wird anhand ihrer ursprünglichen
+    // Datei und ihrer alten areaId identifiziert.
+    const areaIdMapping = new Map();
 
-    // COVISE zunächst auf einen definierten Zustand setzen.
-    sendClearAllModules();
+    const idAssignments = [];
+    const coviseModules = [];
 
-    // Danach geladenen Zustand wiederherstellen.
+    modules.forEach((module, index) => {
+        const sourceFileKey = String(
+            module.sourceFileKey ?? "single-file"
+        );
+
+        const areaKey = JSON.stringify([
+            sourceFileKey,
+            module.areaId
+        ]);
+
+        if (!areaIdMapping.has(areaKey)) {
+            areaIdMapping.set(
+                areaKey,
+                newNextAreaId++
+            );
+        }
+
+        const newModuleId = newNextModuleId++;
+        const newAreaId = areaIdMapping.get(areaKey);
+
+        idAssignments.push({
+            index,
+            moduleId: newModuleId,
+            areaId: newAreaId
+        });
+
+        coviseModules.push({
+            id: newModuleId,
+            corners: module.corners
+        });
+    });
+
+    // Bestehende Module bleiben erhalten!
+    // Insbesondere KEIN sendClearAllModules().
     sendSetModules(coviseModules);
 
-    // Neue IDs immer oberhalb der größten geladenen ID vergeben.
-    nextModuleId =
-        Math.max(...moduleIds) + 1;
+    nextModuleId = newNextModuleId;
+    nextRoofDraftId = newNextAreaId;
+
+    console.log(
+        `${coviseModules.length} Module importiert, ` +
+        `${areaIdMapping.size} Dachflächen zugeordnet.`
+    );
 
     return {
         success: true,
-        moduleCount: modules.length,
-        nextModuleId
+        moduleCount: coviseModules.length,
+        areaCount: areaIdMapping.size,
+        idAssignments,
+        nextModuleId,
+        nextAreaId: nextRoofDraftId
     };
 }
-
 
 // =========================================================
 // HTTP: MODULE LÖSCHEN
@@ -948,17 +1161,134 @@ function deleteModules(moduleIds) {
     return moduleIds;
 }
 
+
 async function onGetBrowserEvents() {
-    const deletedModuleIds =
-        pendingDeletedModuleIds.splice(
+
+    const resyncRequired =
+        resyncGeneration > completedResyncGeneration;
+
+    // Während ein vollständiger Abgleich aussteht,
+    // keine veralteten Löschereignisse übertragen.
+    const deletedModuleIds = resyncRequired
+        ? []
+        : pendingDeletedModuleIds.splice(
             0,
             pendingDeletedModuleIds.length
         );
 
     return {
-        deletedModuleIds
+        deletedModuleIds,
+        resyncRequired,
+        resyncGeneration
     };
 }
+
+
+// =========================================================
+// MODULE AUS OPENLAYERS NACH TCP-RECONNECT ÜBERTRAGEN
+// =========================================================
+
+async function onResyncModules(body) {
+
+    const modules = body?.modules;
+    const generation = body?.generation;
+
+    if (
+        !Number.isInteger(generation) ||
+        generation !== resyncGeneration ||
+        generation <= completedResyncGeneration
+    ) {
+        throw new Error(
+            "Synchronisierungsanforderung ist nicht mehr aktuell."
+        );
+    }
+
+    if (
+        !covise.socket ||
+        covise.socket.destroyed ||
+        !covise.handshakeComplete
+    ) {
+        throw new Error(
+            "MapLink ist derzeit nicht verbunden."
+        );
+    }
+
+    if (
+        !Array.isArray(modules) ||
+        modules.length > 10000
+    ) {
+        throw new Error(
+            "Ungültiger Modulbestand."
+        );
+    }
+
+    const moduleIds = new Set();
+
+    for (const module of modules) {
+
+        if (
+            !module ||
+            !Number.isInteger(module.id) ||
+            module.id < 1 ||
+            moduleIds.has(module.id) ||
+            !Array.isArray(module.corners) ||
+            module.corners.length !== 4 ||
+            !module.corners.every(corner =>
+                corner &&
+                ["longitude", "latitude", "height"].every(
+                    key => Number.isFinite(corner[key])
+                )
+            )
+        ) {
+            throw new Error(
+                "Ungültige Modul-ID oder Modulgeometrie."
+            );
+        }
+
+        moduleIds.add(module.id);
+    }
+
+    console.log(
+        `Wiederherstellung von ${modules.length} PV-Modulen gestartet.`
+    );
+
+    // Kein ClearAll: MapLink ist nach dem
+    // Verbindungsabbruch bereits leer.
+    const BATCH_SIZE = 100;
+
+    for (
+        let i = 0;
+        i < modules.length;
+        i += BATCH_SIZE
+    ) {
+        sendSetModules(
+            modules.slice(i, i + BATCH_SIZE)
+        );
+    }
+
+    // Die nächste freie Modul-ID korrekt fortführen.
+    for (const id of moduleIds) {
+        nextModuleId = Math.max(
+            nextModuleId,
+            id + 1
+        );
+    }
+
+    pendingDeletedModuleIds.length = 0;
+
+    completedResyncGeneration = generation;
+
+    console.log(
+        `${modules.length} Module zur Wiederherstellung übertragen.`
+    );
+
+    return {
+        moduleCount: modules.length,
+        generation
+    };
+}
+
+
 
 async function onDeleteModules(body) {
     const deletedModuleIds =
@@ -1085,6 +1415,20 @@ covise.on("message", message => {
 
                 break;
 
+            case MSG_ProjectTransformReady:
+                console.log(
+                    "MapLink: Projekttransformation bereit."
+                );
+
+                resyncGeneration++;
+                pendingDeletedModuleIds.length = 0;
+
+                console.log(
+                    "Modulsynchronisierung angefordert:",
+                    resyncGeneration
+                );
+                break;
+
             default:
                 console.log(
                     "MapLink-Antwort:",
@@ -1127,6 +1471,11 @@ covise.on("close", () => {
 // =========================================================
 
 covise.on("ready", async () => {
+
+    console.log(
+        "MapLink verbunden. Warte auf Projekttransformation."
+    );
+
     if (
         !RUN_INTEGRATION_TEST ||
         integrationTestStarted
@@ -1244,6 +1593,55 @@ covise.on("ready", async () => {
     }
 });
 
+
+
+
+
+// =========================================================
+// VERBINDUNGSEINSTELLUNGEN
+// =========================================================
+
+// Aktuelle MapLink-Verbindung abfragen
+async function onGetConnectionStatus() {
+
+    return {
+        coviseHost: covise.host,
+        covisePort: covise.port,
+        coviseConnected:
+            Boolean(
+                covise.socket &&
+                !covise.socket.destroyed &&
+                covise.handshakeComplete
+            )
+    };
+}
+
+
+// MapLink-Verbindungsadresse ändern
+async function onConfigureCovise(body) {
+
+    const host = body?.host;
+    const port = Number(body?.port);
+
+    if (
+        typeof host !== "string" ||
+        !host.trim() ||
+        !Number.isInteger(port) ||
+        port < 1 ||
+        port > 65535
+    ) {
+        throw new Error(
+            "Ungültiger MapLink-Host oder Port."
+        );
+    }
+
+    // Bestehende TCP-Verbindung bei Bedarf umstellen.
+    covise.updateConnection(host.trim(), port);
+
+    return onGetConnectionStatus();
+}
+
+
 // =========================================================
 // HTTP-SERVER STARTEN
 // =========================================================
@@ -1258,7 +1656,12 @@ startHttpServer({
     onClearModules,
     onLoadProject,
     onGetBrowserEvents,
-    onGetMap
+    onResyncModules,
+    onGetMap,
+    onGetConnectionStatus,
+    onConfigureCovise,
+    onGetModuleTypes,
+    onAddModuleType
 });
 
 // =========================================================

@@ -47,9 +47,10 @@ class CoviseConnection extends EventEmitter {
         this.handshakeComplete = false;
         this.receiveBuffer = Buffer.alloc(0);
 
-        this.socket = new net.Socket();
+        const socket = new net.Socket();
+        this.socket = socket;
 
-        this.socket.connect(
+        socket.connect(
             this.port,
             this.host,
             () => {
@@ -57,11 +58,11 @@ class CoviseConnection extends EventEmitter {
             }
         );
 
-        this.socket.on("data", data => {
+        socket.on("data", data => {
             this.handleIncomingData(data);
         });
 
-        this.socket.on("error", error => {
+        socket.on("error", error => {
             console.error(
                 "COVISE Fehler:",
                 error.message
@@ -73,7 +74,13 @@ class CoviseConnection extends EventEmitter {
             );
         });
 
-        this.socket.on("close", () => {
+        socket.on("close", () => {
+
+            // Ereignisse einer früheren Verbindung ignorieren.
+            if (this.socket !== socket) {
+                return;
+            }
+
             console.log("COVISE Verbindung geschlossen");
 
             this.handshakeComplete = false;
@@ -221,6 +228,68 @@ class CoviseConnection extends EventEmitter {
             this.socket.destroy();
         }
     }
+
+    
+    // =====================================================
+    // VERBINDUNGSADRESSE ÄNDERN
+    // =====================================================
+
+    updateConnection(host, port) {
+
+        if (
+            typeof host !== "string" ||
+            !host.trim() ||
+            !Number.isInteger(port) ||
+            port < 1 ||
+            port > 65535
+        ) {
+            throw new Error(
+                "Ungültiger COVISE-Host oder Port."
+            );
+        }
+
+        host = host.trim();
+
+        // Keine Änderung erforderlich.
+        if (
+            this.host === host &&
+            this.port === port
+        ) {
+            return;
+        }
+
+        console.log(
+            `COVISE-Verbindung wird umgestellt: ${host}:${port}`
+        );
+
+        // Laufende Reconnect-Versuche beenden.
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+
+        // Alte Verbindung absichtlich schließen.
+        this.intentionallyClosed = true;
+
+        const oldSocket = this.socket;
+
+        // Alten Socket von der aktiven Verbindung trennen.
+        this.socket = null;
+        this.handshakeComplete = false;
+        this.receiveBuffer = Buffer.alloc(0);
+
+        if (oldSocket && !oldSocket.destroyed) {
+            oldSocket.destroy();
+        }
+
+        // Neue Zieladresse übernehmen.
+        this.host = host;
+        this.port = port;
+
+        // Mit dem neuen Ziel verbinden.
+        this.connect();
+    }
+
 }
 
 
