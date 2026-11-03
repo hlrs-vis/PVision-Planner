@@ -7,6 +7,7 @@ const { CoviseConnection } = require("./coviseConnection");
 const { PNG } = require("pngjs");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 
 const {
     MSG_GetHeight,
@@ -89,8 +90,7 @@ function getModuleTypesList() {
             id,
             name: type.name,
             width: type.width,
-            length: type.length,
-            model: type.model
+            length: type.length
         })
     );
 }
@@ -105,7 +105,6 @@ async function onAddModuleType(body) {
     const name = body?.name?.trim();
     const width = body?.width;
     const length = body?.length;
-    const model = body?.model?.trim();
 
     if (
         typeof name !== "string" ||
@@ -124,17 +123,6 @@ async function onAddModuleType(body) {
         length > 10
     ) {
         throw new Error("Ungültige Modulabmessungen.");
-    }
-
-    // Nur ein einfacher OBJ-Dateiname, kein Dateipfad.
-    if (
-        typeof model !== "string" ||
-        !/^[a-zA-Z0-9_.-]+\.obj$/i.test(model) ||
-        model.length > 150
-    ) {
-        throw new Error(
-            "Bitte einen gültigen OBJ-Dateinamen angeben."
-        );
     }
 
     // Eindeutige, gut lesbare Kennung erzeugen
@@ -163,8 +151,7 @@ async function onAddModuleType(body) {
     const newType = {
         name,
         width,
-        length,
-        model
+        length
     };
 
     const updated = {
@@ -416,6 +403,7 @@ function calculateModulesForDraft(
             projectionTiltDeg,
             additionalTiltDeg,
 
+            roofType: draft.roofType,
             mountingType,
 
             designSunElevationDeg:
@@ -1641,6 +1629,141 @@ async function onConfigureCovise(body) {
     return onGetConnectionStatus();
 }
 
+// =========================================================
+// HTTP: PV-ERTRAGSBERECHNUNG
+// =========================================================
+
+async function onCalculateYield(body) {
+
+    if (
+        !body ||
+        !Array.isArray(body.groups) ||
+        body.groups.length === 0
+    ) {
+        throw new Error(
+            "Keine Modulgruppen für die Ertragsberechnung übergeben."
+        );
+    }
+
+    const pythonScript = path.join(
+        __dirname,
+        "pv_calculation",
+        "ertragsberechnung.py"
+    );
+
+    return new Promise((resolve, reject) => {
+
+        const python = spawn(
+            "python",
+            [pythonScript, "--json"],
+            {
+                cwd: __dirname,
+                windowsHide: true
+            }
+        );
+
+        let stdout = "";
+        let stderr = "";
+        let finished = false;
+
+        const timeout = setTimeout(() => {
+            python.kill();
+            finish(new Error(
+                "Zeitüberschreitung bei der PV-Ertragsberechnung."
+            ));
+        }, 120000);
+
+        function finish(error, result) {
+            if (finished) return;
+
+            finished = true;
+            clearTimeout(timeout);
+
+            if (error) {
+                reject(error);
+            } else {
+                resolve(result);
+            }
+        }
+
+        python.on("error", error => {
+            finish(new Error(
+                `Python konnte nicht gestartet werden: ${error.message}`
+            ));
+        });
+
+        python.stdout.setEncoding("utf8");
+        python.stderr.setEncoding("utf8");
+
+        python.stdout.on("data", chunk => {
+            stdout += chunk;
+
+            if (stdout.length > 5_000_000) {
+                python.kill();
+                finish(new Error(
+                    "Die Python-Antwort ist zu groß."
+                ));
+            }
+        });
+
+        python.stderr.on("data", chunk => {
+            stderr += chunk;
+
+            if (stderr.length > 1_000_000) {
+                python.kill();
+                finish(new Error(
+                    "Die Python-Protokollausgabe ist zu groß."
+                ));
+            }
+        });
+
+        python.on("close", code => {
+
+            if (finished) return;
+
+            if (code !== 0) {
+                finish(new Error(
+                    `PV-Ertragsberechnung fehlgeschlagen: ${
+                        stderr.trim() || `Python-Exit-Code ${code}`
+                    }`
+                ));
+                return;
+            }
+
+            try {
+                const result = JSON.parse(stdout);
+
+                if (
+                    result.success !== true ||
+                    !result.gesamt ||
+                    !Array.isArray(result.gruppen)
+                ) {
+                    throw new Error(
+                        "Unvollständiges Berechnungsergebnis."
+                    );
+                }
+
+                finish(null, result);
+
+            } catch (error) {
+                finish(new Error(
+                    `Ungültige Python-Antwort: ${error.message}`
+                ));
+            }
+        });
+
+        python.stdin.on("error", error => {
+            finish(new Error(
+                `Fehler bei der Python-Eingabe: ${error.message}`
+            ));
+        });
+
+        python.stdin.end(
+            JSON.stringify(body),
+            "utf8"
+        );
+    });
+}
 
 // =========================================================
 // HTTP-SERVER STARTEN
@@ -1661,7 +1784,8 @@ startHttpServer({
     onGetConnectionStatus,
     onConfigureCovise,
     onGetModuleTypes,
-    onAddModuleType
+    onAddModuleType,
+    onCalculateYield
 });
 
 // =========================================================

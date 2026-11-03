@@ -92,16 +92,44 @@ const importMenu =
 const yieldAnalysisButton =
     document.getElementById('yield-analysis-button');
 
+const yieldAnalysisPanel =
+    document.getElementById('yield-analysis-panel');
+
+const closeYieldAnalysisButton =
+    document.getElementById('close-yield-analysis');
+
+const yieldModuleTypesContainer =
+    document.getElementById('yield-module-types');
+
+const yieldModuleCountOutput =
+    document.getElementById('yield-module-count');
+
+const yieldAlbedoInput =
+    document.getElementById('yield-albedo');
+
+const yieldTemperatureInput =
+    document.getElementById('yield-temperature-coefficient');
+
+const yieldSystemLossesInput =
+    document.getElementById('yield-system-losses');
+
+const calculateYieldButton =
+    document.getElementById('calculate-yield-button');
+
+const yieldAnalysisStatus =
+    document.getElementById('yield-analysis-status');
+
+const yieldAnalysisResults =
+    document.getElementById('yield-analysis-results');
+
 const settingsButton =
     document.getElementById('settings-button');
-
 
 const settingsPanel =
     document.getElementById('settings-panel');
 
 const closeSettingsButton =
     document.getElementById('close-settings');
-
 
 const serverUrlInput =
     document.getElementById('server-url-input');
@@ -121,7 +149,6 @@ const resetConnectionButton =
 const connectionStatusOutput =
     document.getElementById('connection-status');
 
-
 const availableModuleTypesList =
     document.getElementById("available-module-types");
 
@@ -139,9 +166,6 @@ const newModuleWidthInput =
 
 const newModuleLengthInput =
     document.getElementById("new-module-length");
-
-const newModuleModelInput =
-    document.getElementById("new-module-model");
 
 const saveNewModuleTypeButton =
     document.getElementById("save-new-module-type");
@@ -3356,7 +3380,7 @@ async function loadModuleTypesFromServer() {
 
         const item = document.createElement("li");
 
-        item.textContent = `${label} (${type.model || "kein OBJ"})`;
+        item.textContent = label;
 
         availableModuleTypesList.appendChild(item);
     }
@@ -3408,8 +3432,6 @@ saveNewModuleTypeButton.addEventListener(
         const width = Number(newModuleWidthInput.value);
         const length = Number(newModuleLengthInput.value);
 
-        const model = newModuleModelInput.value.trim();
-
         if (
             !name ||
             !newModuleWidthInput.value.trim() ||
@@ -3417,8 +3439,7 @@ saveNewModuleTypeButton.addEventListener(
             !Number.isFinite(width) ||
             !Number.isFinite(length) ||
             width <= 0 ||
-            length <= 0 ||
-            !model
+            length <= 0
         ) {
             moduleTypesStatus.textContent =
                 "Bitte alle Felder gültig ausfüllen.";
@@ -3440,8 +3461,7 @@ saveNewModuleTypeButton.addEventListener(
                     body: JSON.stringify({
                         name,
                         width,
-                        length,
-                        model
+                        length
                     })
                 }
             );
@@ -3459,7 +3479,6 @@ saveNewModuleTypeButton.addEventListener(
             newModuleNameInput.value = "";
             newModuleWidthInput.value = "";
             newModuleLengthInput.value = "";
-            newModuleModelInput.value = "";
 
             newModuleTypeForm.hidden = true;
             showNewModuleTypeButton.hidden = false;
@@ -3481,6 +3500,920 @@ saveNewModuleTypeButton.addEventListener(
             saveNewModuleTypeButton.disabled = false;
         }
     }
+);
+
+
+
+ // =========================================================
+ // ERTRAGSANALYSE: MODULE UND EINGABEPARAMETER
+ // =========================================================
+
+const yieldPowerByType = new globalThis.Map();
+
+function getPlacedPvModules() {
+    return drawingSource.getFeatures().filter(
+        feature => feature.get('objectType') === 'pv-module'
+    );
+}
+
+function getUsedModuleTypes() {
+    const counts = new globalThis.Map();
+
+    for (const feature of getPlacedPvModules()) {
+        const type = feature.get('moduleType');
+
+        if (typeof type !== 'string' || !type) {
+            throw new Error(
+                'Mindestens ein Modul besitzt keinen gültigen Modultyp.'
+            );
+        }
+
+        counts.set(type, (counts.get(type) ?? 0) + 1);
+    }
+
+    return counts;
+}
+
+function getModuleTypeDisplayName(typeId) {
+    const option = Array.from(moduleTypeInput.options)
+        .find(option => option.value === typeId);
+
+    return option?.textContent?.trim() || typeId;
+}
+
+
+// =========================================================
+// ERTRAGSANALYSE: FENSTER ÖFFNEN UND SCHLIESSEN
+// =========================================================
+
+function openYieldAnalysis() {
+
+    if (isEditingArea || projectImportRunning) {
+        alert(
+            'Bitte zuerst die Dachflächenbearbeitung ' +
+            'bzw. den Projektimport abschließen.'
+        );
+        return;
+    }
+
+    const modules = getPlacedPvModules();
+
+    if (modules.length === 0) {
+        alert('Es wurden noch keine PV-Module platziert.');
+        return;
+    }
+
+    closeToolMenus();
+    closeSettingsPanel();
+
+    yieldModuleTypesContainer.replaceChildren();
+    yieldAnalysisResults.replaceChildren();
+    yieldAnalysisResults.hidden = true;
+    yieldAnalysisStatus.textContent = '';
+
+    let usedTypes;
+
+    try {
+        usedTypes = getUsedModuleTypes();
+    } catch (error) {
+        alert(error.message);
+        return;
+    }
+
+    yieldModuleCountOutput.textContent =
+        `${modules.length} PV-Module in ` +
+        `${usedTypes.size} Modultyp(en) vorhanden.`;
+
+    for (const [typeId, count] of usedTypes) {
+
+        const container = document.createElement('div');
+        container.className = 'yield-module-type';
+
+        const label = document.createElement('label');
+        label.textContent = getModuleTypeDisplayName(typeId);
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '1';
+        input.step = '1';
+        input.placeholder = 'Nennleistung in Wp';
+        input.dataset.moduleType = typeId;
+
+        const storedPower = yieldPowerByType.get(typeId);
+
+        if (storedPower !== undefined) {
+            input.value = String(storedPower);
+        }
+
+        const info = document.createElement('small');
+        info.textContent =
+            `${count} Module – Nennleistung je Modul [Wp]`;
+
+        container.append(label, input, info);
+        yieldModuleTypesContainer.appendChild(container);
+    }
+
+    yieldAnalysisPanel.hidden = false;
+}
+
+function closeYieldAnalysis() {
+    yieldAnalysisPanel.hidden = true;
+}
+
+
+// =========================================================
+// ERTRAGSANALYSE: EINGABEPARAMETER EINLESEN
+// =========================================================
+
+function getYieldParameters() {
+
+    const powers = new globalThis.Map();
+
+    const inputs = yieldModuleTypesContainer
+        .querySelectorAll('input[data-module-type]');
+
+    for (const input of inputs) {
+
+        const power = Number(input.value);
+
+        if (
+            input.value.trim() === '' ||
+            !Number.isFinite(power) ||
+            power <= 0
+        ) {
+            throw new Error(
+                'Bitte eine gültige Nennleistung für ' +
+                getModuleTypeDisplayName(input.dataset.moduleType) +
+                ' eingeben.'
+            );
+        }
+
+        powers.set(input.dataset.moduleType, power);
+    }
+
+    function readNumber(input, name) {
+
+        if (input.value.trim() === '') {
+            throw new Error(`${name} darf nicht leer sein.`);
+        }
+
+        const value = Number(input.value);
+
+        if (!Number.isFinite(value)) {
+            throw new Error(`Ungültiger Wert für ${name}.`);
+        }
+
+        return value;
+    }
+
+    const albedo = readNumber(
+        yieldAlbedoInput,
+        'Albedo'
+    );
+
+    const temperaturkoeffizient = readNumber(
+        yieldTemperatureInput,
+        'Temperaturkoeffizient'
+    );
+
+    const systemverluste = readNumber(
+        yieldSystemLossesInput,
+        'Systemverluste'
+    );
+
+    if (albedo < 0 || albedo > 1) {
+        throw new Error(
+            'Albedo muss zwischen 0 und 1 liegen.'
+        );
+    }
+
+    if (
+        temperaturkoeffizient < -1 ||
+        temperaturkoeffizient > 0
+    ) {
+        throw new Error(
+            'Temperaturkoeffizient muss zwischen -1 und 0 %/K liegen.'
+        );
+    }
+
+    if (systemverluste < 0 || systemverluste >= 100) {
+        throw new Error(
+            'Systemverluste müssen zwischen 0 und unter 100 % liegen.'
+        );
+    }
+
+    return {
+        powers,
+        albedo,
+        temperaturkoeffizient,
+        systemverluste
+    };
+}
+
+
+ // =========================================================
+ // ERTRAGSANALYSE: ANLAGENSTANDORT ERMITTELN
+ // =========================================================
+
+function getYieldLocation() {
+
+    const modules = getPlacedPvModules();
+
+    if (modules.length === 0) {
+        throw new Error('Keine PV-Module vorhanden.');
+    }
+
+    let latitudeSum = 0;
+    let longitudeSum = 0;
+    let pointCount = 0;
+
+    for (const feature of modules) {
+
+        const corners = feature.get('corners3D');
+
+        if (!Array.isArray(corners) || corners.length !== 4) {
+            throw new Error(
+                `Geografische Eckpunkte fehlen bei Modul ` +
+                `${feature.get('moduleId')}.`
+            );
+        }
+
+        for (const corner of corners) {
+
+            if (
+                !Number.isFinite(corner.latitude) ||
+                !Number.isFinite(corner.longitude)
+            ) {
+                throw new Error(
+                    'Ungültige geografische Modulkoordinaten.'
+                );
+            }
+
+            latitudeSum += corner.latitude;
+            longitudeSum += corner.longitude;
+            pointCount++;
+        }
+    }
+
+    const latitude = latitudeSum / pointCount;
+    const longitude = longitudeSum / pointCount;
+
+    // Ein repräsentativer Standort für die gesamte Anlage.
+    return {
+        latitude: Number(latitude.toFixed(5)),
+        longitude: Number(longitude.toFixed(5))
+    };
+}
+
+
+function classifyPitchedRoofAzimuth(azimuthDeg) {
+
+    const directions = [
+        'north',
+        'northeast',
+        'east',
+        'southeast',
+        'south',
+        'southwest',
+        'west',
+        'northwest'
+    ];
+
+    const normalized =
+        ((azimuthDeg % 360) + 360) % 360;
+
+    const index =
+        Math.floor((normalized + 22.5) / 45) % 8;
+
+    return `pitched_${directions[index]}`;
+}
+
+function getYieldCategoryLabel(category) {
+
+    const labels = {
+        flat_south: 'Flachdach – Südaufständerung',
+        flat_east_west: 'Flachdach – Ost-West-Aufständerung',
+
+        pitched_north: 'Schrägdach – Nord',
+        pitched_northeast: 'Schrägdach – Nordost',
+        pitched_east: 'Schrägdach – Ost',
+        pitched_southeast: 'Schrägdach – Südost',
+        pitched_south: 'Schrägdach – Süd',
+        pitched_southwest: 'Schrägdach – Südwest',
+        pitched_west: 'Schrägdach – West',
+        pitched_northwest: 'Schrägdach – Nordwest'
+    };
+
+    return labels[category] ?? category;
+}
+
+
+// =========================================================
+// ERTRAGSANALYSE: BERECHNUNGSGRUPPEN ERSTELLEN
+// =========================================================
+
+function createYieldGroups(powers) {
+
+    const groups = new globalThis.Map();
+
+    for (const feature of getPlacedPvModules()) {
+
+        const type = feature.get('moduleType');
+        const roofType = feature.get('roofType');
+        const mountingType = feature.get('mountingType');
+
+        const azimuthRaw = feature.get('moduleAzimuthDeg');
+
+        // Schrägdach: Die Module liegen dachparallel.
+        // tiltDeg = 0 beschreibt dort nur die zusätzliche
+        // Aufständerung, nicht die tatsächliche Modulneigung.
+        const tiltRaw =
+            roofType === 'pitched'
+                ? feature.get('roofTiltDeg')
+                : feature.get('tiltDeg');
+
+        // Fehlende Werte dürfen nicht durch Number(null) = 0
+        // als scheinbar gültige Winkel interpretiert werden.
+        if (
+            azimuthRaw === null ||
+            azimuthRaw === undefined ||
+            tiltRaw === null ||
+            tiltRaw === undefined ||
+            azimuthRaw === '' ||
+            tiltRaw === ''
+        ) {
+            throw new Error(
+                `Azimut oder Neigung fehlt bei Modul ` +
+                `${feature.get('moduleId')}.`
+            );
+        }
+
+        const azimuth = Number(azimuthRaw);
+        const tilt = Number(tiltRaw);
+
+        if (
+            !Number.isFinite(azimuth) ||
+            !Number.isFinite(tilt) ||
+            tilt < 0 ||
+            tilt > 90
+        ) {
+            throw new Error(
+                `Ungültiger Azimut oder Neigungswinkel ` +
+                `bei Modul ${feature.get('moduleId')}.`
+            );
+        }
+
+        const power = powers.get(type);
+
+        if (!Number.isFinite(power) || power <= 0) {
+            throw new Error(
+                `Nennleistung für Modultyp "${type}" fehlt.`
+            );
+        }
+
+        if (
+            mountingType !== 'south' &&
+            mountingType !== 'east_west'
+        ) {
+            throw new Error(
+                `Ungültige Aufständerungsart bei Modul ` +
+                `${feature.get('moduleId')}.`
+            );
+        }
+
+        
+        let category;
+
+        if (roofType === 'pitched') {
+
+            // Schrägdach: Kategorie aus tatsächlichem Azimut
+            category = classifyPitchedRoofAzimuth(azimuth);
+
+        } else if (roofType === 'flat') {
+
+            // Flachdach: bisherige Aufständerungsarten
+            category =
+                mountingType === 'east_west'
+                    ? 'flat_east_west'
+                    : 'flat_south';
+
+        } else {
+            throw new Error(
+                `Unbekannter Dachtyp bei Modul ` +
+                `${feature.get('moduleId')}.`
+            );
+        }
+
+
+        // Tatsächliche Winkel verwenden.
+        // Für die Gruppierung auf 0,1° runden.
+        const normalizedAzimuth =
+            ((Math.round(
+                (((azimuth % 360) + 360) % 360) * 10
+            ) / 10) % 360);
+
+        const normalizedTilt =
+            Math.round(tilt * 10) / 10;
+
+        const key = JSON.stringify([
+            type,
+            category,
+            normalizedAzimuth,
+            normalizedTilt
+        ]);
+
+        if (!groups.has(key)) {
+            groups.set(key, {
+                id: `G${groups.size + 1}`,
+                kategorie: category,
+                anzahl: 0,
+                leistung_wp: power,
+                neigung: normalizedTilt,
+                azimut: normalizedAzimuth
+            });
+        }
+
+        groups.get(key).anzahl++;
+    }
+
+    return Array.from(groups.values());
+}
+
+
+function createYieldMonthlyChart(result, categories) {
+
+    const months = [
+        'Jan', 'Feb', 'Mär', 'Apr',
+        'Mai', 'Jun', 'Jul', 'Aug',
+        'Sep', 'Okt', 'Nov', 'Dez'
+    ];
+
+    const colors = [
+        '#2563eb',
+        '#f59e0b',
+        '#16a34a',
+        '#a855f7',
+        '#ef4444',
+        '#06b6d4',
+        '#84cc16',
+        '#f97316',
+        '#64748b',
+        '#db2777'
+    ];
+
+    const format = value =>
+        Number(value).toLocaleString('de-DE', {
+            maximumFractionDigits: 1
+        });
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'yield-chart-wrapper';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Monatliche Energieerträge';
+
+    wrapper.appendChild(title);
+
+    // Legende
+    const legend = document.createElement('div');
+    legend.className = 'yield-chart-legend';
+
+    categories.forEach((category, index) => {
+
+        const item = document.createElement('div');
+        item.className = 'yield-chart-legend-item';
+
+        const color = document.createElement('span');
+        color.className = 'yield-chart-color';
+        color.style.backgroundColor =
+            colors[index % colors.length];
+
+        const label = document.createElement('span');
+        label.textContent =
+            getYieldCategoryLabel(category);
+
+        item.append(color, label);
+        legend.appendChild(item);
+    });
+
+    wrapper.appendChild(legend);
+
+    // Höchster Gesamtmonatsertrag als Skalierung
+    const maxYield = Math.max(
+        1,
+        ...result.gesamt.monatswerte_kwh
+    );
+
+    const chartScroll = document.createElement('div');
+    chartScroll.className = 'yield-chart-scroll';
+
+    const chart = document.createElement('div');
+    chart.className = 'yield-chart';
+
+    months.forEach((month, monthIndex) => {
+
+        const column = document.createElement('div');
+        column.className = 'yield-chart-column';
+
+        const bar = document.createElement('div');
+        bar.className = 'yield-chart-bar';
+
+        categories.forEach((category, categoryIndex) => {
+
+            const monthlyYield = result.gruppen
+                .filter(group =>
+                    group.kategorie === category
+                )
+                .reduce(
+                    (sum, group) =>
+                        sum +
+                        Number(group.monatswerte_kwh[monthIndex]),
+                    0
+                );
+
+            if (monthlyYield <= 0) {
+                return;
+            }
+
+            const segment = document.createElement('div');
+            segment.className = 'yield-chart-segment';
+
+            segment.style.height =
+                `${monthlyYield / maxYield * 100}%`;
+
+            segment.style.backgroundColor =
+                colors[categoryIndex % colors.length];
+
+            segment.title =
+                `${month} – ${getYieldCategoryLabel(category)}: ` +
+                `${format(monthlyYield)} kWh`;
+
+            bar.appendChild(segment);
+        });
+
+        const monthLabel = document.createElement('span');
+        monthLabel.className = 'yield-chart-month';
+        monthLabel.textContent = month;
+
+        column.append(bar, monthLabel);
+        chart.appendChild(column);
+    });
+
+    chartScroll.appendChild(chart);
+    wrapper.appendChild(chartScroll);
+
+    const hint = document.createElement('p');
+    hint.className = 'yield-hint';
+    hint.textContent =
+        'Die Säulen zeigen die monatlichen Gesamterträge. ' +
+        'Einzelwerte erscheinen beim Berühren mit der Maus.';
+
+    wrapper.appendChild(hint);
+
+    return wrapper;
+}
+
+
+// =========================================================
+// ERTRAGSANALYSE: ERGEBNISSE DARSTELLEN
+// =========================================================
+
+function showYieldResults(result) {
+
+    const formatNumber = (value, digits = 2) =>
+        Number(value).toLocaleString('de-DE', {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits
+        });
+
+    yieldAnalysisResults.replaceChildren();
+
+    function addSummary(title, count, power, energy) {
+
+        const box = document.createElement('div');
+        box.className = 'yield-result-summary';
+
+        const heading = document.createElement('strong');
+        heading.textContent = title;
+
+        const details = document.createElement('div');
+
+        details.textContent =
+            `${count} Module | ` +
+            `${formatNumber(power)} kWp | ` +
+            `${formatNumber(energy)} kWh/a`;
+
+        box.append(heading, details);
+        yieldAnalysisResults.appendChild(box);
+    }
+
+    // Gesamtanlage
+    addSummary(
+        'Gesamtanlage',
+        result.gesamt.modulanzahl,
+        result.gesamt.leistung_kwp,
+        result.gesamt.jahresertrag_kwh
+    );
+
+
+    // Spezifischer Jahresertrag [kWh/kWp]
+    if (result.gesamt.leistung_kwp > 0) {
+
+        const specificYield =
+            result.gesamt.jahresertrag_kwh /
+            result.gesamt.leistung_kwp;
+
+        const specificYieldInfo =
+            document.createElement('p');
+
+        specificYieldInfo.className = 'yield-hint';
+
+        specificYieldInfo.textContent =
+            'Spezifischer Jahresertrag: ' +
+            formatNumber(specificYield, 1) +
+            ' kWh/kWp';
+
+        yieldAnalysisResults.appendChild(specificYieldInfo);
+    }
+
+    
+    // Alle tatsächlich vorhandenen Kategorien ermitteln
+    const categories = [
+        ...new Set(
+            result.gruppen.map(group => group.kategorie)
+        )
+    ];
+
+    for (const category of categories) {
+
+        const title = getYieldCategoryLabel(category);
+
+
+        const matches = result.gruppen.filter(
+            group => group.kategorie === category
+        );
+
+        if (matches.length === 0) {
+            continue;
+        }
+
+        addSummary(
+            title,
+            matches.reduce(
+                (sum, group) => sum + group.anzahl,
+                0
+            ),
+            matches.reduce(
+                (sum, group) => sum + group.leistung_kwp,
+                0
+            ),
+            matches.reduce(
+                (sum, group) => sum + group.jahresertrag_kwh,
+                0
+            )
+        );
+    }
+
+    // Grafische Darstellung der Monatserträge
+    const monthlyChart = createYieldMonthlyChart(
+        result,
+        categories
+    );
+
+    yieldAnalysisResults.appendChild(monthlyChart);
+
+    // Monatserträge als Tabelle
+    const heading = document.createElement('h3');
+    heading.textContent =
+        `Monatliche Energieerträge (${result.year})`;
+
+    yieldAnalysisResults.appendChild(heading);
+
+    const months = [
+        'Jan', 'Feb', 'Mär', 'Apr',
+        'Mai', 'Jun', 'Jul', 'Aug',
+        'Sep', 'Okt', 'Nov', 'Dez'
+    ];
+
+    function sumMonth(category, index) {
+        return result.gruppen
+            .filter(group => group.kategorie === category)
+            .reduce(
+                (sum, group) =>
+                    sum + group.monatswerte_kwh[index],
+                0
+            );
+    }
+
+    const table = document.createElement('table');
+    table.className = 'yield-monthly-table';
+
+    const header = document.createElement('tr');
+
+        
+    const columnNames = [
+        'Monat',
+        ...categories.map(getYieldCategoryLabel),
+        'Gesamt'
+    ];
+
+    for (const name of columnNames) {
+
+        const cell = document.createElement('th');
+        cell.textContent = name;
+        header.appendChild(cell);
+    }
+
+    table.appendChild(header);
+
+    months.forEach((month, index) => {
+
+        const row = document.createElement('tr');
+
+        
+        const values = [
+            month,
+
+            ...categories.map(category =>
+                formatNumber(sumMonth(category, index), 1)
+            ),
+
+            formatNumber(
+                result.gesamt.monatswerte_kwh[index],
+                1
+            )
+        ];
+
+
+        for (const value of values) {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.appendChild(cell);
+        }
+
+        table.appendChild(row);
+    });
+
+    yieldAnalysisResults.appendChild(table);
+
+    const unit = document.createElement('p');
+    unit.className = 'yield-hint';
+    unit.textContent = 'Alle Tabellenwerte in kWh.';
+
+    yieldAnalysisResults.appendChild(unit);
+
+
+    // =====================================================
+    // EINZELGRUPPEN OPTIONAL ANZEIGEN
+    // =====================================================
+
+    const details = document.createElement('details');
+    details.className = 'settings-section';
+
+    const summary = document.createElement('summary');
+    summary.textContent =
+        `Berechnungsgruppen anzeigen (${result.gruppen.length})`;
+
+    details.appendChild(summary);
+
+    const content = document.createElement('div');
+    content.className = 'settings-content';
+
+    for (const group of result.gruppen) {
+
+        const box = document.createElement('div');
+        box.className = 'yield-result-summary';
+
+        
+        const title = document.createElement('strong');
+
+        let categoryLabel = getYieldCategoryLabel(group.kategorie);
+
+        if (group.kategorie === 'flat_east_west') {
+            const direction = classifyPitchedRoofAzimuth(group.azimut);
+
+            categoryLabel +=
+                direction === 'pitched_east'
+                    ? ' (Ost)'
+                    : direction === 'pitched_west'
+                        ? ' (West)'
+                        : ` (${group.azimut.toFixed(1)}°)`;
+        }
+
+        title.textContent = `${group.id} – ${categoryLabel}`;
+
+
+        const information = document.createElement('div');
+
+        information.textContent =
+            `${group.anzahl} Module | ` +
+            `Azimut ${formatNumber(group.azimut, 1)}° | ` +
+            `Neigung ${formatNumber(group.neigung, 1)}° | ` +
+            `${formatNumber(group.jahresertrag_kwh)} kWh/a`;
+
+        box.append(title, information);
+        content.appendChild(box);
+    }
+
+    details.appendChild(content);
+    yieldAnalysisResults.appendChild(details);
+
+    yieldAnalysisResults.hidden = false;
+}
+
+
+// =========================================================
+// ERTRAGSANALYSE: HTTP-BERECHNUNG
+// =========================================================
+
+async function calculateYield() {
+
+    calculateYieldButton.disabled = true;
+
+    yieldAnalysisStatus.textContent =
+        'PV-Ertrag wird berechnet...';
+
+    yieldAnalysisResults.hidden = true;
+
+    try {
+
+        const parameters = getYieldParameters();
+
+        const groups = createYieldGroups(parameters.powers);
+        const location = getYieldLocation();
+
+        if (groups.length === 0) {
+            throw new Error(
+                'Keine gültigen PV-Modulgruppen vorhanden.'
+            );
+        }
+
+        // Nennleistungen für erneute Analysen merken
+        for (const [type, power] of parameters.powers) {
+            yieldPowerByType.set(type, power);
+        }
+
+        console.log(
+            'Ertragsberechnung: Modulgruppen',
+            groups
+        );
+
+        
+        const result = await postJson(
+            '/calculate-yield',
+            {
+                groups,
+
+                latitude: location.latitude,
+                longitude: location.longitude,
+
+                albedo: parameters.albedo,
+                temperaturkoeffizient:
+                    parameters.temperaturkoeffizient,
+                systemverluste:
+                    parameters.systemverluste
+            }
+        );
+
+        showYieldResults(result);
+
+        yieldAnalysisStatus.textContent =
+            'Ertragsberechnung erfolgreich abgeschlossen.';
+
+    } catch (error) {
+
+        console.error(
+            'Ertragsanalyse fehlgeschlagen:',
+            error
+        );
+
+        yieldAnalysisStatus.textContent =
+            `Fehler: ${error.message}`;
+
+    } finally {
+
+        calculateYieldButton.disabled = false;
+    }
+}
+
+
+// =========================================================
+// ERTRAGSANALYSE: BUTTON-EVENTS
+// =========================================================
+
+yieldAnalysisButton.addEventListener(
+    'click',
+    openYieldAnalysis
+);
+
+closeYieldAnalysisButton.addEventListener(
+    'click',
+    closeYieldAnalysis
+);
+
+calculateYieldButton.addEventListener(
+    'click',
+    calculateYield
 );
 
 

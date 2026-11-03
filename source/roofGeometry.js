@@ -167,6 +167,28 @@ function calculateRoofTilt(roofPlane) {
     return radToDeg(Math.atan(gradient));
 }
 
+
+function calculateRoofAzimuth(roofPlane) {
+
+    const { a, b } = roofPlane;
+
+    const gradient = Math.hypot(a, b);
+
+    // Eine horizontale Dachfläche besitzt
+    // keinen eindeutigen Dachazimut.
+    if (gradient < 1e-8) {
+        return null;
+    }
+
+    // Horizontale Projektion der nach oben
+    // gerichteten Dachflächennormalen.
+    return vectorAzimuthDeg({
+        x: -a,
+        y: -b
+    });
+}
+
+
 // =========================================================
 // BASIS DER AUSGEWÄHLTEN RECHTECKFLÄCHE
 // =========================================================
@@ -600,6 +622,12 @@ function createModuleLayout(roofPoints, roofPlane, config) {
         maxModules = Infinity
     } = config;
 
+    const roofType = config.roofType;
+
+    if (!["flat", "pitched"].includes(roofType)) {
+        throw new Error(`Ungültiger Dachtyp: ${roofType}`);
+    }
+
     // Neu: Unterscheidung Süd / Ost-West
     const mountingType = config.mountingType ?? "south";
 
@@ -710,18 +738,60 @@ function createModuleLayout(roofPoints, roofPlane, config) {
     // Projizierte Modulabmessungen
     // -----------------------------------------------------
 
-    const projectedDimensions =
-        calculateProjectedModuleDimensions(
-            moduleLength,
-            moduleWidth,
-            projectionTiltDeg
+    
+    let projectedModuleWidth;
+    let projectedModuleLength;  
+
+    if (roofType === "pitched") {
+
+        // Schrägdach:
+        // Steigung in Richtung der beiden Modulachsen
+        const slopeU =
+            roofPlane.a * layoutBasis.u.x +
+            roofPlane.b * layoutBasis.u.y;
+
+        const slopeV =
+            roofPlane.a * layoutBasis.v.x +
+            roofPlane.b * layoutBasis.v.y;
+
+        // Horizontale Kantenlängen so berechnen,
+        // dass die räumlichen Kantenlängen stimmen.
+        projectedModuleWidth =
+            moduleWidth / Math.sqrt(1 + slopeU ** 2);
+
+        projectedModuleLength =
+            moduleLength / Math.sqrt(1 + slopeV ** 2);
+
+        console.log("----- SCHRÄGDACH-PROJEKTION -----");
+        console.log("Steigung U:", slopeU);
+        console.log("Steigung V:", slopeV);
+        console.log(
+            "Projizierte Modulbreite:",
+            projectedModuleWidth.toFixed(4), "m"
+        );
+        console.log(
+            "Projizierte Modullänge:",
+            projectedModuleLength.toFixed(4), "m"
         );
 
-    const projectedModuleWidth =
-        projectedDimensions.width;
+    } else {
 
-    const projectedModuleLength =
-        projectedDimensions.length;
+        // Flachdach:
+        // Bisherige Berechnung unverändert lassen.
+        const projectedDimensions =
+            calculateProjectedModuleDimensions(
+                moduleLength,
+                moduleWidth,
+                projectionTiltDeg
+            );
+
+        projectedModuleWidth =
+            projectedDimensions.width;
+
+        projectedModuleLength =
+            projectedDimensions.length;
+    }
+
 
     // -----------------------------------------------------
     // Reihenabstände
@@ -922,22 +992,36 @@ function createModuleLayout(roofPoints, roofPlane, config) {
         // -------------------------------------------------
         // Tatsächlichen Modulazimut speichern
         // -------------------------------------------------
+        
+        let azimuthDeg;
 
-        // Die Modulfläche zeigt in die entgegengesetzte
-        // Richtung ihrer ansteigenden Kante.
-        //
-        // Bei Ost-West:
-        // Gerade Reihen -> West
-        // Ungerade Reihen -> Ost
+        if (roofType === "pitched") {
 
-        const azimuthDeg =
-            mountingType === "south"
-                ? orientation.southAzimuthDeg
-                : (
-                    westFacing
-                        ? orientation.eastAzimuthDeg
-                        : orientation.westAzimuthDeg
+            // Schrägdach:
+            // Tatsächlicher Azimut aus der Dachgeometrie.
+            azimuthDeg = calculateRoofAzimuth(roofPlane);
+
+            if (azimuthDeg === null) {
+                throw new Error(
+                    "Für das Schrägdach konnte kein " +
+                    "eindeutiger Azimut bestimmt werden."
                 );
+            }
+
+        } else {
+
+            // Flachdach:
+            // Bisherige Süd-/Ost-West-Aufständerung.
+            azimuthDeg =
+                mountingType === "south"
+                    ? orientation.southAzimuthDeg
+                    : (
+                        westFacing
+                            ? orientation.eastAzimuthDeg
+                            : orientation.westAzimuthDeg
+                    );
+        }
+
 
         for (let col = 0; col < numColumns; col++) {
 
@@ -1017,9 +1101,13 @@ function createModuleLayout(roofPoints, roofPlane, config) {
             modules.push({
                 corners: corners.map(toGlobalCorner),
 
+                roofType,
                 mountingType,
 
-                orientationCategory: mountingType,
+                orientationCategory:
+                    roofType === "pitched"
+                        ? "pitched"
+                        : mountingType,
 
                 moduleAzimuthDeg: azimuthDeg,
 

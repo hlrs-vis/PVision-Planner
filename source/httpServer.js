@@ -98,7 +98,8 @@ function startHttpServer({
     onGetConnectionStatus,
     onConfigureCovise,
     onGetModuleTypes,
-    onAddModuleType
+    onAddModuleType,
+    onCalculateYield
 }) {
     const server = http.createServer(
         async (req, res) => {
@@ -133,7 +134,28 @@ function startHttpServer({
                     return;
                 }
 
-                
+                // =========================================================
+                // PV-ERTRAGSBERECHNUNG
+                // =========================================================
+
+                if (
+                    req.method === "POST" &&
+                    req.url === "/calculate-yield"
+                ) {
+                    if (!onCalculateYield) {
+                        throw new Error(
+                            "Handler für /calculate-yield fehlt."
+                        );
+                    }
+
+                    const body = await readJsonBody(req);
+
+                    const result = await onCalculateYield(body);
+
+                    sendJson(res, 200, result);
+
+                    return;
+                }
                 
                 // =========================================
                 // MODULTYPEN ABRUFEN
