@@ -344,6 +344,11 @@ let automaticRowGapM = 0;
 let currentRoofDraftId = null;
 let currentPreviewModules = [];
 
+// Nachträgliche Bearbeitung bestehender Dachflächen
+let existingAreaSelectionMode = false;
+let editingExistingAreaId = null;
+let areaFinishInProgress = false;
+
 let previewUpdateTimer = null;
 let previewUpdateChain =
     Promise.resolve();
@@ -1272,7 +1277,136 @@ function scheduleRoofDraftUpdate() {
 // EDITOR
 // =========================================================
 
-function startAreaEditing(feature) {
+
+function getExistingAreaModules(areaId) {
+
+    if (!Number.isInteger(areaId)) {
+        throw new Error('Ungültige Area-ID.');
+    }
+
+    const modules = drawingSource
+        .getFeatures()
+        .filter(feature =>
+            feature.get('objectType') === 'pv-module' &&
+            feature.get('areaId') === areaId
+        );
+
+    if (modules.length === 0) {
+        throw new Error(
+            `Für Area ${areaId} wurden keine Module gefunden.`
+        );
+    }
+
+    const moduleIds = modules.map(feature =>
+        feature.get('moduleId')
+    );
+
+    if (
+        !moduleIds.every(Number.isInteger) ||
+        new Set(moduleIds).size !== moduleIds.length
+    ) {
+        throw new Error(
+            'Die bestehenden Modul-IDs sind ungültig ' +
+            'oder nicht eindeutig.'
+        );
+    }
+
+    return {
+        areaId,
+        modules,
+        moduleIds
+    };
+}
+
+
+
+function startEditingExistingArea(moduleFeature) {
+
+    const areaId = moduleFeature.get('areaId');
+    const editData = moduleFeature.get('areaEditData');
+
+    if (!Number.isInteger(areaId) || !editData) {
+        alert(
+            'Für diese Modulgruppe sind keine ' +
+            'Bearbeitungsdaten vorhanden.'
+        );
+        return;
+    }
+
+    const roofCoordinates = editData.roofCoordinates;
+    const settings = editData.settings;
+
+    if (
+        !Array.isArray(roofCoordinates) ||
+        roofCoordinates.length < 4 ||
+        !roofCoordinates.every(point =>
+            Array.isArray(point) &&
+            point.length >= 2 &&
+            Number.isFinite(point[0]) &&
+            Number.isFinite(point[1])
+        ) ||
+        !settings ||
+        typeof settings !== 'object'
+    ) {
+        alert('Die gespeicherten Dachflächendaten sind ungültig.');
+        return;
+    }
+
+    // Prüfen, ob der gespeicherte Modultyp vorhanden ist.
+    const moduleTypeExists = Array.from(
+        moduleTypeInput.options
+    ).some(option => option.value === settings.moduleType);
+
+    if (!moduleTypeExists) {
+        alert(
+            `Der Modultyp "${settings.moduleType}" ` +
+            'ist nicht verfügbar.'
+        );
+        return;
+    }
+
+    // Ursprüngliche Dachgeometrie rekonstruieren.
+    const ring = roofCoordinates
+        .map(point => [...point]);
+
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+        ring.push([...first]);
+    }
+
+    const areaFeature = new Feature({
+        geometry: new Polygon([ring])
+    });
+
+    // Bestehende Einstellungen übernehmen.
+    moduleTypeInput.value = settings.moduleType;
+    orientationInput.value = settings.orientation;
+    edgeDistanceInput.value =
+        String(settings.edgeDistance);
+
+    moduleTiltDeg = Number(settings.tiltDeg) || 0;
+    moduleTiltInput.value = String(moduleTiltDeg);
+
+    existingAreaSelectionMode = false;
+
+    editExistingAreaButton.textContent =
+        'Modulgruppe bearbeiten';
+
+    closeToolMenus();
+    closeSettingsPanel();
+    closeYieldAnalysis();
+
+    // Bestehenden Editor und seine Vorschau wiederverwenden.
+    startAreaEditing(areaFeature, {
+        areaId,
+        settings
+    });
+}
+
+
+function startAreaEditing(feature, existingArea = null) {
     currentAreaFeature =
         feature;
 
@@ -1283,8 +1417,13 @@ function startAreaEditing(feature) {
     currentRoofDraftId = null;
     currentPreviewModules = [];
 
-    mountingType = 'south';
+    mountingType =
+    existingArea?.settings?.mountingType ?? 'south';
+
     automaticRowGapM = 0;
+
+    editingExistingAreaId =
+        existingArea?.areaId ?? null;
 
     updateMountingDirectionUi();
     updateRowGapUi();
@@ -1298,6 +1437,9 @@ function startAreaEditing(feature) {
 
     editor.hidden = false;
     finishButton.disabled = true;
+
+    // Bestehende Areas zunächst nur als Vorschau bearbeiten.
+    finishButton.hidden = false;
 
     placeButton.textContent = '+ Modulplatzierung starten';
 
@@ -1339,6 +1481,9 @@ function resetAreaEditing() {
 
     currentRoofDraftId = null;
     currentPreviewModules = [];
+
+    editingExistingAreaId = null;
+    finishButton.hidden = false;
 
     roofType = null;
     roofTiltDeg = null;
@@ -1402,6 +1547,10 @@ async function discardRoofDraft(
 }
 
 async function cancelAreaEditing() {
+    if (areaFinishInProgress) {
+        return;
+    }
+
     if (!isEditingArea) {
         return;
     }
@@ -1429,189 +1578,253 @@ async function cancelAreaEditing() {
     resetAreaEditing();
 }
 
+
 async function finishAreaEditing() {
+
     if (
         !isEditingArea ||
-        !hasDraftId(
-            currentRoofDraftId
-        )
+        !hasDraftId(currentRoofDraftId)
     ) {
         return;
     }
 
-    if (
-        currentPreviewModules.length === 0
-    ) {
+    if (areaFinishInProgress) {
         return;
     }
+
+    areaFinishInProgress = true;
 
     finishButton.disabled = true;
+    cancelButton.disabled = true;
 
     try {
+
+        // Noch offene Vorschauaktualisierungen abwarten.
         if (previewUpdateTimer) {
-            clearTimeout(
-                previewUpdateTimer
-            );
-
-            previewUpdateTimer =
-                null;
+            clearTimeout(previewUpdateTimer);
+            previewUpdateTimer = null;
         }
 
         await previewUpdateChain;
 
-        queueRoofDraftUpdate();
+        const draftId = currentRoofDraftId;
+        const settings = getCurrentModuleSettings();
 
-        await previewUpdateChain;
+        // Die letzte Einstellung verbindlich neu berechnen.
+        // Dieselbe vorhandene Vorschaufunktion verwenden.
+        await sendRoofDraftUpdate(draftId, settings);
 
-        const draftId =
-            currentRoofDraftId;
-
-        const result =
-            await postJson(
-                '/finish-roof',
-                {
-                    draftId
-                }
-            );
-
-        const moduleIds =
-            Array.isArray(
-                result.moduleIds
-            )
-                ? result.moduleIds
-                : [];
-
-        if (
-            moduleIds.length !==
-            currentPreviewModules.length
-        ) {
+        if (currentPreviewModules.length === 0) {
             throw new Error(
-                'Anzahl der Modul-IDs stimmt nicht mit der Vorschau überein.'
+                "Mit diesen Einstellungen können " +
+                "keine Module platziert werden."
             );
         }
 
-        const previewFeatures =
-            previewSource
-                .getFeatures()
-                .filter(
-                    feature =>
-                        feature.get(
-                            'objectType'
-                        ) ===
-                        'preview-module'
-                )
-                .sort(
-                    (a, b) =>
-                        a.get(
-                            'previewIndex'
-                        ) -
-                        b.get(
-                            'previewIndex'
-                        )
-                );
+        // Die vorhandenen Vorschau-Features ermitteln.
+        const previewFeatures = previewSource
+            .getFeatures()
+            .filter(feature =>
+                feature.get('objectType') === 'preview-module'
+            )
+            .sort((a, b) =>
+                a.get('previewIndex') -
+                b.get('previewIndex')
+            );
 
         if (
             previewFeatures.length !==
-            moduleIds.length
+            currentPreviewModules.length
         ) {
             throw new Error(
-                'Die Modulvorschau ist unvollständig.'
+                "Die Modulvorschau ist unvollständig."
             );
         }
 
-        const settings =
-            getCurrentModuleSettings();
+        const isExistingArea =
+            editingExistingAreaId !== null;
 
-        previewFeatures.forEach(
+        // Bei einer bestehenden Area nur deren Module sammeln.
+        const oldGroup = isExistingArea
+            ? getExistingAreaModules(editingExistingAreaId)
+            : null;
+
+        const requestPath = isExistingArea
+            ? '/replace-roof'
+            : '/finish-roof';
+
+        const requestBody = isExistingArea
+            ? {
+                draftId,
+                areaId: editingExistingAreaId,
+
+                oldModules: oldGroup.modules.map(feature => ({
+                    id: feature.get('moduleId'),
+                    corners: feature.get('corners3D')
+                }))
+            }
+            : {
+                draftId
+            };
+
+        // Server schließt den Draft ab bzw. ersetzt die Gruppe.
+        const result = await postJson(
+            requestPath,
+            requestBody
+        );
+
+        const moduleIds = Array.isArray(result.moduleIds)
+            ? result.moduleIds
+            : [];
+
+        if (
+            !Array.isArray(result.modules) ||
+            moduleIds.length !== previewFeatures.length ||
+            result.modules.length !== previewFeatures.length
+        ) {
+            throw new Error(
+                "Serverantwort enthält keine vollständige " +
+                "Modulzuordnung. Bitte den 3D-Zustand prüfen."
+            );
+        }
+
+        // Bei Bearbeitung bleibt die ursprüngliche Area-ID.
+        const targetAreaId = isExistingArea
+            ? editingExistingAreaId
+            : draftId;
+
+        const areaEditData = {
+            roofCoordinates:
+                currentAreaFeature
+                    .getGeometry()
+                    .getCoordinates()[0]
+                    .map(point => [...point]),
+
+            settings: {
+                ...settings
+            }
+        };
+
+        // Neue OpenLayers-Features vorbereiten.
+        const newFeatures = previewFeatures.map(
             (feature, index) => {
-                const moduleFeature =
-                    feature.clone();
 
-                moduleFeature.setStyle(
-                    undefined
-                );
+                const moduleFeature = feature.clone();
 
-                
-            const calculatedModule = result.modules[index];
+                moduleFeature.setStyle(undefined);
 
-            moduleFeature.setProperties({
-                objectType: 'pv-module',
+                const calculatedModule = result.modules[index];
 
-                moduleId: moduleIds[index],
+                moduleFeature.setProperties({
+                    objectType: 'pv-module',
+                    moduleId: moduleIds[index],
+                    areaId: targetAreaId,
 
-                areaId: draftId,
+                    areaEditData: {
+                        roofCoordinates:
+                            areaEditData.roofCoordinates
+                                .map(point => [...point]),
 
-                corners3D: calculatedModule.corners,
+                        settings: {
+                            ...areaEditData.settings
+                        }
+                    },
 
-                moduleType: settings.moduleType,
+                    corners3D: calculatedModule.corners,
 
-                orientation: settings.orientation,
+                    moduleType: settings.moduleType,
+                    orientation: settings.orientation,
+                    mountingDirection: settings.mountingDirection,
 
-                mountingDirection: settings.mountingDirection,
+                    mountingType: calculatedModule.mountingType,
 
-                mountingType: calculatedModule.mountingType,
+                    orientationCategory:
+                        calculatedModule.orientationCategory,
 
-                orientationCategory:
-                    calculatedModule.orientationCategory,
+                    moduleAzimuthDeg:
+                        calculatedModule.moduleAzimuthDeg,
 
-                moduleAzimuthDeg:
-                    calculatedModule.moduleAzimuthDeg,
+                    roofReferenceAzimuthDeg:
+                        calculatedModule.roofReferenceAzimuthDeg,
 
-                roofReferenceAzimuthDeg:
-                    calculatedModule.roofReferenceAzimuthDeg,
+                    rowIndex: calculatedModule.rowIndex,
+                    rowPairId: calculatedModule.rowPairId,
 
-                rowIndex: calculatedModule.rowIndex,
+                    tiltDeg: settings.tiltDeg,
+                    automaticRowGapM:
+                        calculatedModule.automaticRowGapM,
 
-                rowPairId: calculatedModule.rowPairId,
+                    roofType,
+                    roofTiltDeg
+                });
 
-                tiltDeg: settings.tiltDeg,
-
-                automaticRowGapM,
-
-                roofType,
-                roofTiltDeg
-            });
-
-
-                drawingSource.addFeature(
-                    moduleFeature
-                );
+                return moduleFeature;
             }
         );
 
-        if (currentAreaFeature) {
-            const areaFeature =
-                currentAreaFeature.clone();
+        // Alte Modulgruppe erst nach erfolgreicher
+        // Serverantwort aus OpenLayers entfernen.
+        if (isExistingArea) {
+
+            selectInteraction.getFeatures().clear();
+
+            oldGroup.modules.forEach(feature => {
+                drawingSource.removeFeature(feature);
+            });
+        }
+
+        newFeatures.forEach(feature => {
+            drawingSource.addFeature(feature);
+        });
+
+        // Nur bei neuen Dachflächen die Area ergänzen.
+        if (!isExistingArea && currentAreaFeature) {
+
+            const areaFeature = currentAreaFeature.clone();
 
             areaFeature.setProperties({
-                objectType:
-                    'module-area',
-                areaId:
-                    draftId
+                objectType: 'module-area',
+                areaId: targetAreaId
             });
 
-            moduleAreaSource.addFeature(
-                areaFeature
-            );
+            moduleAreaSource.addFeature(areaFeature);
         }
 
         updateDownloadLink();
         resetAreaEditing();
 
+        // Nach einer Bearbeitung die 3D-Draufsicht erneuern.
+        if (isExistingArea) {
+            scheduleSnapshotRefresh(0);
+        }
+
+        console.log(
+            isExistingArea
+                ? `Area ${targetAreaId} erfolgreich aktualisiert.`
+                : `Area ${targetAreaId} erfolgreich erstellt.`
+        );
+
     } catch (error) {
+
         console.error(
-            'Dach konnte nicht abgeschlossen werden:',
+            "Dachfläche konnte nicht abgeschlossen werden:",
             error
         );
 
         alert(
-            `Dach konnte nicht abgeschlossen werden: ${error.message}`
+            "Dachfläche konnte nicht abgeschlossen werden: " +
+            error.message
         );
 
         finishButton.disabled =
-            false;
+            currentPreviewModules.length === 0;
+
+    } finally {
+        areaFinishInProgress = false;
+        cancelButton.disabled = false;
     }
 }
+
 
 // =========================================================
 // ZEICHENMODUS
@@ -2035,6 +2248,11 @@ function cancelCurrentInteraction() {
 // =========================================================
 
 async function deleteSelectedFeatures() {
+
+    if (areaFinishInProgress) {
+        return;
+    }
+
     const selected =
         selectInteraction
             .getFeatures()
@@ -2307,6 +2525,12 @@ setInterval(
 // =========================================================
 
 async function clearAllModules() {
+
+    if (areaFinishInProgress) {
+        alert('Bitte den laufenden Speichervorgang abschließen.');
+        return;
+    }
+
     try {
         if (isEditingArea) {
             await cancelAreaEditing();
@@ -2577,6 +2801,9 @@ function updateDownloadLink() {
                                     'areaId'
                                 ),
 
+                            areaEditData:
+                                feature.get('areaEditData') ?? null,
+
                             corners3D:
                                 feature.get(
                                     'corners3D'
@@ -2789,6 +3016,34 @@ function updatePlaceButtonState() {
 map.on(
     'singleclick',
     event => {
+        
+        if (existingAreaSelectionMode) {
+
+            const clickedModule = map.forEachFeatureAtPixel(
+                event.pixel,
+                feature => {
+                    if (
+                        feature.get('objectType') === 'pv-module'
+                    ) {
+                        return feature;
+                    }
+
+                    return undefined;
+                },
+                {
+                    hitTolerance: 5,
+                    layerFilter: layer =>
+                        layer === drawingLayer
+                }
+            );
+
+            if (clickedModule) {
+                startEditingExistingArea(clickedModule);
+            }
+
+            return;
+        }
+
         if (
             handleMountingDirectionClick(
                 event.pixel
@@ -3173,6 +3428,40 @@ document.addEventListener('keydown', event => {
     }
 });
 
+// Button zum Bearbeiten bereits platzierter Modulgruppen
+const editExistingAreaButton = document.createElement('button');
+
+editExistingAreaButton.type = 'button';
+editExistingAreaButton.id = 'edit-existing-area';
+editExistingAreaButton.className = placeButton.className;
+editExistingAreaButton.textContent = 'Modulgruppe bearbeiten';
+
+placeButton.insertAdjacentElement(
+    'afterend',
+    editExistingAreaButton
+);
+
+editExistingAreaButton.addEventListener('click', () => {
+
+    if (isEditingArea || projectImportRunning) {
+        return;
+    }
+
+    if (isDrawingArea) {
+        cancelCurrentInteraction();
+    }
+
+    cancelSelectionDrawing();
+
+    selectInteraction.getFeatures().clear();
+
+    existingAreaSelectionMode = !existingAreaSelectionMode;
+
+    editExistingAreaButton.textContent =
+        existingAreaSelectionMode
+            ? 'Gruppe anklicken – Abbrechen'
+            : 'Modulgruppe bearbeiten';
+});
 
 placeButton.addEventListener(
     'click',

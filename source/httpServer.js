@@ -89,6 +89,7 @@ function startHttpServer({
     onUpdateRoofDraft,
     onResyncModules,
     onFinishRoof,
+    onReplaceRoof,
     onCancelRoof,
     onDeleteModules,
     onClearModules,
@@ -420,6 +421,30 @@ function startHttpServer({
 
                     return;
                 }
+
+                
+                if (
+                    req.method === "POST" &&
+                    req.url === "/replace-roof"
+                ) {
+                    if (!onReplaceRoof) {
+                        throw new Error(
+                            "Handler für /replace-roof fehlt."
+                        );
+                    }
+
+                    const body = await readJsonBody(req);
+
+                    const result = await onReplaceRoof(body);
+
+                    sendJson(res, 200, {
+                        success: true,
+                        ...result
+                    });
+
+                    return;
+                }
+
 
                 if (
                     req.method === "POST" &&

@@ -978,6 +978,152 @@ async function onFinishRoof(body) {
 
 }
 
+
+async function onReplaceRoof(body) {
+
+    const {
+        draftId,
+        areaId,
+        oldModules
+    } = body ?? {};
+
+    // Eingaben prüfen
+    if (!Number.isInteger(draftId) ||
+        !Number.isInteger(areaId) ||
+        areaId < 1) {
+        throw new Error("Ungültige Draft- oder Area-ID.");
+    }
+
+    if (!Array.isArray(oldModules) ||
+        oldModules.length === 0) {
+        throw new Error(
+            "Die ursprüngliche Modulgruppe fehlt."
+        );
+    }
+
+    const oldIds = oldModules.map(module => module.id);
+
+    if (
+        !oldIds.every(id => Number.isInteger(id) && id > 0) ||
+        new Set(oldIds).size !== oldIds.length
+    ) {
+        throw new Error(
+            "Die bisherigen Modul-IDs sind ungültig."
+        );
+    }
+
+    // Ursprüngliche Geometrien für einen möglichen
+    // Wiederherstellungsversuch bereithalten.
+    if (!oldModules.every(module =>
+        Array.isArray(module.corners) &&
+        module.corners.length === 4 &&
+        module.corners.every(corner =>
+            corner &&
+            ["longitude", "latitude", "height"].every(
+                key => Number.isFinite(corner[key])
+            )
+        )
+    )) {
+        throw new Error(
+            "Die bisherigen Modulgeometrien sind ungültig."
+        );
+    }
+
+    const draft = roofDrafts.get(draftId);
+
+    if (!draft) {
+        throw new Error(
+            `Dach-Draft ${draftId} wurde nicht gefunden.`
+        );
+    }
+
+    if (
+        !Array.isArray(draft.modules) ||
+        draft.modules.length === 0
+    ) {
+        throw new Error(
+            "Die neue Modulplatzierung enthält keine Module."
+        );
+    }
+
+    if (
+        !covise.socket ||
+        covise.socket.destroyed ||
+        !covise.handshakeComplete
+    ) {
+        throw new Error(
+            "MapLink ist nicht verbunden."
+        );
+    }
+
+    // Neue IDs vorbereiten, noch nicht fest übernehmen.
+    const newModules = draft.modules.map(
+        (module, index) => ({
+            ...module,
+            id: nextModuleId + index
+        })
+    );
+
+    const newIds = newModules.map(module => module.id);
+
+    // Die alten und neuen IDs dürfen sich nicht überschneiden.
+    if (newIds.some(id => oldIds.includes(id))) {
+        throw new Error(
+            "Konflikt zwischen alten und neuen Modul-IDs."
+        );
+    }
+
+    // Alte Module bleiben zunächst erhalten.
+    sendSetModules(newModules);
+
+    try {
+        // Erst danach bisherige Gruppe entfernen.
+        sendDeleteModules(oldIds);
+
+    } catch (error) {
+
+        // Bestmöglicher Rückbau, falls das Senden
+        // der Lösch-Nachricht fehlschlägt.
+        try {
+            sendDeleteModules(newIds);
+            sendSetModules(oldModules);
+        } catch (rollbackError) {
+            console.error(
+                "Wiederherstellungsversuch fehlgeschlagen:",
+                rollbackError
+            );
+        }
+
+        throw new Error(
+            "Modulgruppe konnte nicht ersetzt werden: " +
+            error.message
+        );
+    }
+
+    // Erst nach dem Absenden beider Nachrichten
+    // den Serverzustand aktualisieren.
+    nextModuleId += newModules.length;
+
+    roofDrafts.delete(draftId);
+
+    console.log(
+        `Area ${areaId}: ${oldIds.length} bisherige Module ` +
+        `durch ${newModules.length} neue Module ersetzt.`
+    );
+
+    return {
+        success: true,
+        areaId,
+        moduleCount: newModules.length,
+        moduleIds: newIds,
+        modules: newModules.map(module => ({
+            ...module,
+            moduleId: module.id
+        }))
+    };
+}
+
+
 // =========================================================
 // HTTP: DRAFT ABBRECHEN
 // =========================================================
@@ -1774,6 +1920,7 @@ startHttpServer({
     onSetRoof,
     onUpdateRoofDraft,
     onFinishRoof,
+    onReplaceRoof,
     onCancelRoof,
     onDeleteModules,
     onClearModules,
