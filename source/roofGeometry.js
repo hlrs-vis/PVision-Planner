@@ -1,4 +1,3 @@
-
 // =========================================================
 // GEOMETRISCHE HILFSFUNKTIONEN
 // =========================================================
@@ -811,13 +810,42 @@ function createModuleLayout(roofPoints, roofPlane, config) {
     // Der freie Abstand entsteht zwischen den Modulpaaren.
     // Vereinfachtes geometrisches Abstandsmodell.
 
+    
+    // Automatischer Abstandsvorschlag
+    const suggestedRowGap =
+        roofType === "pitched"
+            ? 0
+            : mountingType === "east_west"
+                ? Math.max(0, southGap - projectedModuleLength)
+                : southGap;
+
+    // Optionaler, vom Benutzer festgelegter Abstand
+    const rowGapOverrideM = config.rowGapOverrideM;
+
+    const hasManualRowGap =
+        rowGapOverrideM !== null &&
+        rowGapOverrideM !== undefined;
+
+    if (
+        hasManualRowGap &&
+        (
+            typeof rowGapOverrideM !== "number" ||
+            !Number.isFinite(rowGapOverrideM) ||
+            rowGapOverrideM < 0 ||
+            rowGapOverrideM > 1000
+        )
+    ) {
+        throw new Error("Ungültiger manueller Reihenabstand.");
+    }
+
+
+
+    // Tatsächlich verwendeter Reihenabstand
     const rowGap =
-        mountingType === "east_west"
-            ? Math.max(
-                0,
-                southGap - projectedModuleLength
-            )
-            : southGap;
+        roofType === "flat" && rowGapOverrideM != null
+            ? rowGapOverrideM
+            : suggestedRowGap;
+
 
     // -----------------------------------------------------
     // Verfügbare Dachfläche

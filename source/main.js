@@ -67,8 +67,14 @@ const mountingDirectionOutput =
 const rowGapSection =
     document.getElementById('row-gap-section');
 
-const rowGapOutput =
-    document.getElementById('row-gap-value');
+const rowGapInput =
+    document.getElementById('row-gap-input');
+
+const resetRowGapButton =
+    document.getElementById('reset-row-gap');
+
+const rowGapModeOutput =
+    document.getElementById('row-gap-mode');
 
 const loadProjectInput =
     document.getElementById('load-project');
@@ -131,20 +137,17 @@ const settingsPanel =
 const closeSettingsButton =
     document.getElementById('close-settings');
 
-const serverUrlInput =
-    document.getElementById('server-url-input');
+const coviseHostSelect =
+    document.getElementById('covise-host-select');
+
+const customCoviseHostSection =
+    document.getElementById('custom-covise-host-section');
 
 const coviseHostInput =
     document.getElementById('covise-host-input');
 
-const covisePortInput =
-    document.getElementById('covise-port-input');
-
 const applyConnectionButton =
     document.getElementById('apply-connection-settings');
-
-const resetConnectionButton =
-    document.getElementById('reset-connection-settings');
 
 const connectionStatusOutput =
     document.getElementById('connection-status');
@@ -340,6 +343,13 @@ let moduleTiltDeg = 0;
 
 let mountingType = 'south';
 let automaticRowGapM = 0;
+
+// null = automatischer Abstand
+// Zahl = manueller Abstand
+let rowGapOverrideM = null;
+
+// Merkt, ob der Benutzer den Winkel selbst geändert hat
+let moduleTiltManuallyChanged = false;
 
 let currentRoofDraftId = null;
 let currentPreviewModules = [];
@@ -701,11 +711,9 @@ function getCurrentModuleSettings() {
 
     return {
         moduleType: moduleTypeInput.value,
-
         orientation: orientationInput.value,
-
         mountingType: mountingType,
-
+        rowGapOverrideM: rowGapOverrideM,
         mountingDirection: direction?.value ?? 'positive-v',
 
         tiltDeg:
@@ -766,8 +774,16 @@ function updateMountingDirectionUi() {
 }
 
 function updateRowGapUi() {
-    rowGapOutput.textContent =
-        `${automaticRowGapM.toFixed(2).replace('.', ',')} m`;
+    if (!rowGapInput) {
+        return;
+    }
+
+    const displayedGap =
+        rowGapOverrideM !== null
+            ? rowGapOverrideM
+            : automaticRowGapM;
+
+    rowGapInput.value = displayedGap.toFixed(2);
 }
 
 updateModuleTiltFromInput();
@@ -1004,13 +1020,23 @@ function rotateMountingDirection() {
             ? 'east_west'
             : 'south';
 
-    // Ost-West benötigt einen Aufstellwinkel > 0°.
-    if (
+    // Typische Anfangswerte nur verwenden,
+    // wenn der Benutzer den Winkel noch nicht selbst geändert hat.
+    if (!moduleTiltManuallyChanged) {
+
+        moduleTiltDeg =
+            mountingType === 'east_west' ? 25 : 30;
+
+        moduleTiltInput.value =
+            String(moduleTiltDeg);
+
+    } else if (
         mountingType === 'east_west' &&
         moduleTiltDeg === 0
     ) {
-        moduleTiltDeg = 10;
-        moduleTiltInput.value = '10';
+        // Ost-West-Aufständerung benötigt eine Neigung > 0°.
+        moduleTiltDeg = 25;
+        moduleTiltInput.value = '15';
     }
 
     updateMountingDirectionUi();
@@ -1418,9 +1444,24 @@ function startAreaEditing(feature, existingArea = null) {
     currentPreviewModules = [];
 
     mountingType =
-    existingArea?.settings?.mountingType ?? 'south';
+        existingArea?.settings?.mountingType ?? 'south';
+
+    rowGapOverrideM =
+        existingArea?.settings?.rowGapOverrideM ?? null;
+
+    moduleTiltManuallyChanged = existingArea !== null;
+
+    if (!existingArea) {
+        moduleTiltDeg = 30;
+        moduleTiltInput.value = '30';
+    }
 
     automaticRowGapM = 0;
+
+    rowGapInput.value =
+        rowGapOverrideM === null
+            ? '0.00'
+            : rowGapOverrideM.toFixed(2);
 
     editingExistingAreaId =
         existingArea?.areaId ?? null;
@@ -1490,6 +1531,9 @@ function resetAreaEditing() {
 
     mountingType = 'south';
     automaticRowGapM = 0;
+
+    rowGapOverrideM = null;
+    moduleTiltManuallyChanged = false;
 
     previewSource.clear();
 
@@ -1660,7 +1704,8 @@ async function finishAreaEditing() {
 
                 oldModules: oldGroup.modules.map(feature => ({
                     id: feature.get('moduleId'),
-                    corners: feature.get('corners3D')
+                    corners: feature.get('corners3D'),
+                    roofType: feature.get('roofType')
                 }))
             }
             : {
@@ -2388,7 +2433,8 @@ async function resyncModulesToOpenCover(generation) {
             )
             .map(feature => ({
                 id: feature.get("moduleId"),
-                corners: feature.get("corners3D")
+                corners: feature.get("corners3D"),
+                roofType: feature.get("roofType")
             }));
 
         console.log(
@@ -2665,6 +2711,7 @@ async function loadProjectFiles(fileList) {
                 moduleId: properties.moduleId,
                 areaId: properties.areaId,
                 corners: properties.corners3D,
+                roofType: properties.roofType,
 
                 // Eindeutige Kennung innerhalb dieses Imports:
                 // Gleiche areaIds aus verschiedenen Dateien
@@ -2688,6 +2735,7 @@ async function loadProjectFiles(fileList) {
             moduleId: module.moduleId,
             areaId: module.areaId,
             corners: module.corners,
+            roofType: module.roofType,
             sourceFileKey: module.sourceFileKey
         }))
     });
@@ -3161,170 +3209,178 @@ closeSettingsButton.addEventListener(
 );
 
 
-// =========================================================
-// VERBINDUNGSEINSTELLUNGEN
-// =========================================================
 
-async function applyConnectionSettings() {
+ // =========================================================
+ // VERBINDUNGSEINSTELLUNGEN
+ // =========================================================
 
-    const previousServerUrl = SERVER_URL;
+ const MAPLINK_PORT = 31822;
 
-    applyConnectionButton.disabled = true;
+ const MAPLINK_HOSTS = {
+     local: "127.0.0.1",
+     visent: "visent.hlrs.de"
+ };
 
-    connectionStatusOutput.textContent =
-        'Serververbindung wird geprüft...';
+ // =========================================================
+ // RECHNERAUSWAHL
+ // =========================================================
 
-    try {
-        const serverUrl = new URL(
-            serverUrlInput.value.trim()
-        );
+ function updateCoviseHostSelection() {
 
-        if (
-            !['http:', 'https:'].includes(serverUrl.protocol) ||
-            serverUrl.username ||
-            serverUrl.password ||
-            serverUrl.search ||
-            serverUrl.hash ||
-            serverUrl.pathname !== '/'
-        ) {
-            throw new Error(
-                'Bitte eine gültige HTTP-Serveradresse eingeben.'
-            );
-        }
+     const isCustom =
+         coviseHostSelect.value === "other";
 
-        const newServerUrl =
-            serverUrl.origin;
+     customCoviseHostSection.hidden = !isCustom;
 
-        const host =
-            coviseHostInput.value.trim();
+     const labels = {
+         local: "Eigener Rechner (lokal)",
+         visent: "VISENT (HLRS)",
+         other: "Anderer Rechner"
+     };
 
-        const port =
-            Number(covisePortInput.value);
+     connectionStatusOutput.textContent =
+         `Zielrechner: ${labels[coviseHostSelect.value]}.`;
+ }
 
-        if (
-            !host ||
-            !Number.isInteger(port) ||
-            port < 1 ||
-            port > 65535
-        ) {
-            throw new Error(
-                'Ungültiger MapLink-Host oder Port.'
-            );
-        }
+ coviseHostSelect.addEventListener(
+     "change",
+     updateCoviseHostSelection
+ );
 
-        // Zunächst prüfen, ob der Server erreichbar ist.
-        const statusResponse = await fetch(
-            `${newServerUrl}/connection-status`
-        );
+ // =========================================================
+ // MAPLINK-VERBINDUNG HERSTELLEN
+ // =========================================================
 
-        if (!statusResponse.ok) {
-            throw new Error(
-                'Node.js-Server nicht erreichbar.'
-            );
-        }
+ async function applyConnectionSettings() {
 
-        const currentStatus =
-            await statusResponse.json();
+     applyConnectionButton.disabled = true;
 
-        // Plugin nur umstellen, falls sich seine
-        // Verbindungseinstellungen tatsächlich ändern.
-        const pluginChanged =
-            currentStatus.coviseHost !== host ||
-            currentStatus.covisePort !== port;
+     connectionStatusOutput.textContent =
+         "Verbindung wird geprüft...";
 
-        let result = currentStatus;
+     try {
 
-        if (pluginChanged) {
+         // Gewählten Host bestimmen.
+         const selection = coviseHostSelect.value;
 
-            const response = await fetch(
-                `${newServerUrl}/configure-covise`,
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type':
-                            'application/json'
-                    },
-                    body: JSON.stringify({
-                        host,
-                        port
-                    })
-                }
-            );
+         const host = selection === "other"
+             ? coviseHostInput.value.trim()
+             : MAPLINK_HOSTS[selection];
 
-            result = await response.json();
+         if (!host) {
+             throw new Error(
+                 "Bitte eine gültige IP-Adresse " +
+                 "oder einen Hostnamen eingeben."
+             );
+         }
 
-            if (!response.ok || result.success === false) {
-                throw new Error(
-                    result.error ||
-                    'MapLink-Konfiguration fehlgeschlagen.'
-                );
-            }
-        }
+         // Aktuelle Verbindung abfragen.
+         const currentStatus = await postJsonStatus();
 
-        // Erst nach erfolgreicher HTTP-Kommunikation
-        // die Serveradresse übernehmen.
-        SERVER_URL = newServerUrl;
+         const configurationChanged =
+             currentStatus.coviseHost !== host ||
+             currentStatus.covisePort !== MAPLINK_PORT;
 
-        loadModuleTypesFromServer().catch(error => {
-            console.warn("Modultypen konnten nicht geladen werden:", error);
-        });
+         // Nur bei einer Änderung umkonfigurieren.
+         if (configurationChanged) {
 
-        connectionStatusOutput.textContent =
-            result.coviseConnected
-                ? 'Node.js-Server erreichbar. MapLink verbunden.'
-                : 'Node.js-Server erreichbar. MapLink-Verbindung noch nicht bereit.';
+             const response = await fetch(
+                 `${SERVER_URL}/configure-covise`,
+                 {
+                     method: "POST",
+                     headers: {
+                         "Content-Type": "application/json"
+                     },
+                     body: JSON.stringify({
+                         host,
+                         port: MAPLINK_PORT
+                     })
+                 }
+             );
 
-    } catch (error) {
+             const result = await response.json();
 
-        SERVER_URL = previousServerUrl;
+             if (!response.ok || result.success === false) {
+                 throw new Error(
+                     result.error ||
+                     "MapLink-Konfiguration fehlgeschlagen."
+                 );
+             }
+         }
 
-        connectionStatusOutput.textContent =
-            `Verbindung fehlgeschlagen: ${error.message}`;
+         // TCP-Verbindung benötigt ggf. Zeit für Handshake.
+         // Status wiederholt prüfen.
+         let connected = false;
 
-        console.error(
-            'Verbindungseinstellungen:',
-            error
-        );
+         for (let attempt = 0; attempt < 20; attempt++) {
 
-    } finally {
-        applyConnectionButton.disabled = false;
-    }
-}
+             const status = await postJsonStatus();
 
+             if (
+                 status.coviseHost === host &&
+                 status.covisePort === MAPLINK_PORT &&
+                 status.coviseConnected === true
+             ) {
+                 connected = true;
+                 break;
+             }
 
-// =========================================================
-// STANDARDWERTE WIEDERHERSTELLEN
-// =========================================================
+             await new Promise(resolve =>
+                 setTimeout(resolve, 500)
+             );
+         }
 
-function resetConnectionSettings() {
+         connectionStatusOutput.textContent =
+             connected
+                 ? `MapLink verbunden: ${host}`
+                 : `MapLink noch nicht verbunden: ${host}. ` +
+                   "Bitte Zielrechner und Netzwerk prüfen.";
 
-    serverUrlInput.value =
-        'http://localhost:8080';
+     } catch (error) {
 
-    coviseHostInput.value =
-        '127.0.0.1';
+         connectionStatusOutput.textContent =
+             `Verbindung fehlgeschlagen: ${error.message}`;
 
-    covisePortInput.value =
-        '31822';
+         console.error(
+             "MapLink-Verbindungsfehler:",
+             error
+         );
 
-    connectionStatusOutput.textContent =
-        'Standardwerte eingetragen. Zum Übernehmen auf "Verbindung herstellen" klicken.';
-}
+     } finally {
 
+         applyConnectionButton.disabled = false;
+     }
+ }
 
-applyConnectionButton.disabled = false;
-resetConnectionButton.disabled = false;
+ // =========================================================
+ // VERBINDUNGSSTATUS ABFRAGEN
+ // =========================================================
 
-applyConnectionButton.addEventListener(
-    'click',
-    applyConnectionSettings
-);
+ async function postJsonStatus() {
 
-resetConnectionButton.addEventListener(
-    'click',
-    resetConnectionSettings
-);
+     const response = await fetch(
+         `${SERVER_URL}/connection-status`
+     );
 
+     if (!response.ok) {
+         throw new Error(
+             "Node.js-Server nicht erreichbar."
+         );
+     }
+
+     return response.json();
+ }
+
+ // =========================================================
+ // EVENTS
+ // =========================================================
+
+ applyConnectionButton.addEventListener(
+     "click",
+     applyConnectionSettings
+ );
+
+ updateCoviseHostSelection();
 
 
 // =========================================================
@@ -3507,6 +3563,9 @@ moduleTiltInput.addEventListener(
     () => {
         if (roofType !== 'pitched') {
             updateModuleTiltFromInput();
+
+            moduleTiltManuallyChanged = true;
+
             scheduleRoofDraftUpdate();
         }
     }
@@ -3516,6 +3575,37 @@ edgeDistanceInput.addEventListener(
     'input',
     scheduleRoofDraftUpdate
 );
+
+
+ // =========================================================
+ // REIHENABSTAND MANUELL EINSTELLEN
+ // =========================================================
+
+rowGapInput.addEventListener('change', () => {
+
+    if (roofType !== 'flat') {
+        return;
+    }
+
+    const value = Number(rowGapInput.value);
+
+    if (
+        rowGapInput.value.trim() === '' ||
+        !Number.isFinite(value) ||
+        value < 0 ||
+        value > 1000
+    ) {
+        alert('Bitte einen gültigen Reihenabstand eingeben.');
+        updateRowGapUi();
+        return;
+    }
+
+    rowGapOverrideM = value;
+
+    updateRowGapUi();
+    scheduleRoofDraftUpdate();
+});
+
 
 // =========================================================
 // TASTATUR

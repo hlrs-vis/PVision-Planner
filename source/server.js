@@ -406,6 +406,8 @@ function calculateModulesForDraft(
             roofType: draft.roofType,
             mountingType,
 
+            rowGapOverrideM: settings.rowGapOverrideM ?? null,
+
             designSunElevationDeg:
                 DESIGN_SUN_ELEVATION_DEG,
 
@@ -951,8 +953,8 @@ async function onFinishRoof(body) {
 
     const modules = draft.modules.map(module => ({
         ...module,
-
-        id: nextModuleId++
+        id: nextModuleId++,
+        roofType: draft.roofType
     }));
 
 
@@ -1060,7 +1062,8 @@ async function onReplaceRoof(body) {
     const newModules = draft.modules.map(
         (module, index) => ({
             ...module,
-            id: nextModuleId + index
+            id: nextModuleId + index,
+            roofType: draft.roofType
         })
     );
 
@@ -1202,6 +1205,16 @@ async function onLoadProject(body) {
                 `Modul an Position ${index} besitzt keine gültigen 3D-Eckpunkte.`
             );
         }
+
+        // Dachtyp prüfen
+        if (
+            module.roofType !== "flat" &&
+            module.roofType !== "pitched"
+        ) {
+            throw new Error(
+                `Modul an Position ${index} besitzt keinen gültigen Dachtyp.`
+            );
+        }
     });
 
     // Lokale Zähler: Erst nach erfolgreichem
@@ -1244,7 +1257,8 @@ async function onLoadProject(body) {
 
         coviseModules.push({
             id: newModuleId,
-            corners: module.corners
+            corners: module.corners,
+            roofType: module.roofType
         });
     });
 
@@ -1359,12 +1373,13 @@ async function onResyncModules(body) {
     const moduleIds = new Set();
 
     for (const module of modules) {
-
         if (
             !module ||
             !Number.isInteger(module.id) ||
             module.id < 1 ||
             moduleIds.has(module.id) ||
+            (module.roofType !== "flat" &&
+            module.roofType !== "pitched") ||
             !Array.isArray(module.corners) ||
             module.corners.length !== 4 ||
             !module.corners.every(corner =>
@@ -1375,7 +1390,7 @@ async function onResyncModules(body) {
             )
         ) {
             throw new Error(
-                "Ungültige Modul-ID oder Modulgeometrie."
+                "Ungültige Modul-ID, Dachtyp oder Modulgeometrie."
             );
         }
 
@@ -1703,7 +1718,8 @@ covise.on("ready", async () => {
         const modules =
             layout.modules.map(module => ({
                 id: nextModuleId++,
-                corners: module.corners
+                corners: module.corners,
+                roofType: module.roofType
             }));
 
         sendSetModules(modules);

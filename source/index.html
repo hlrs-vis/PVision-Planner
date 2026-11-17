@@ -23,64 +23,87 @@
     }
 
 
-    
-  /* ================================================ */
-  /* WERKZEUGLEISTE */
-  /* ================================================ */
+        
+    /* ================================================ */
+    /* WERKZEUGLEISTE */
+    /* ================================================ */
 
-  #tools {
-      position: absolute;
-      top: 1rem;
-      right: 1rem;
-      left: 4rem;
-      z-index: 30;
+    #tools {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        left: 4rem;
+        z-index: 30;
 
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-      gap: 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 0.5rem;
 
-      pointer-events: none;
-  }
+        pointer-events: none;
+    }
 
-  #tools > * {
-      pointer-events: auto;
-  }
+    #tools > * {
+        pointer-events: auto;
+    }
 
-  #tools button,
-  #tools a {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
+    #tools button,
+    #tools a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
 
-      min-height: 42px;
-      box-sizing: border-box;
+        min-height: 42px;
+        box-sizing: border-box;
 
-      padding: 0.6rem 0.85rem;
-      border: 1px solid #cccccc;
-      border-radius: 6px;
+        padding: 0.6rem 0.85rem;
+        border: 1px solid #cccccc;
+        border-radius: 6px;
 
-      background: white;
-      color: #222222;
+        background: white;
+        color: #222222;
 
-      font-family: inherit;
-      font-size: 0.9rem;
-      text-decoration: none;
-      white-space: nowrap;
-      cursor: pointer;
-  }
+        font-family: inherit;
+        font-size: 0.9rem;
+        text-decoration: none;
+        white-space: nowrap;
+        cursor: pointer;
+    }
 
-  #tools button:hover,
-  #tools a:hover {
-      background: #eeeeF4;
-  }
+    #tools button:hover,
+    #tools a:hover {
+        background: #eeeeF4;
+    }
 
-  #tools button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-  }
+    #tools button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    /* ================================================ */
+    /* REIHENABSTAND */
+    /* ================================================ */
+
+    #row-gap-section {
+        margin-top: 0.65rem;
+    }
+
+    #row-gap-input {
+        box-sizing: border-box;
+        width: 100%;
+        margin-top: 0.35rem;
+        padding: 0.55rem;
+        border: 1px solid #aaaaaa;
+        border-radius: 4px;
+        background: white;
+        font-size: 1rem;
+    }
+
+    #row-gap-value[hidden] {
+        display: none;
+    }
 
   /* ================================================ */
   /* ICONS */
@@ -221,124 +244,193 @@
 
 
     /* ================================================ */
-    /* EDITOR */
+    /* KOMPAKTER MODULFLÄCHEN-EDITOR */
     /* ================================================ */
 
     #area-editor {
       position: absolute;
       top: 0;
       right: 0;
-      z-index: 20;
+      z-index: 40; /* vor der Werkzeugleiste (#tools: 30) */
       box-sizing: border-box;
-      width: 320px;
+      width: 360px;
+      max-width: 100%;
       height: 100%;
-      padding: 1.25rem;
+      padding: 0.9rem 0.95rem 0;
       overflow-y: auto;
       background: rgba(245, 245, 250, 0.97);
       border-left: 1px solid #b8b8c5;
       box-shadow: -4px 0 12px rgba(0, 0, 0, 0.25);
     }
 
-    #area-editor[hidden] {
-      display: none;
-    }
-
-    #area-editor h2 {
-      margin-top: 0;
-      margin-bottom: 1rem;
-      font-size: 1.2rem;
-    }
-
-    #area-editor label {
-      display: block;
-      margin-top: 1rem;
-      font-size: 0.9rem;
-      font-weight: bold;
-    }
-
-    #area-editor input,
-    #area-editor select {
-      box-sizing: border-box;
-      width: 100%;
-      margin-top: 0.35rem;
-      padding: 0.55rem;
-      border: 1px solid #aaaaaa;
-      border-radius: 4px;
-      background: white;
-    }
-
-    /* ================================================ */
-    /* INFORMATIONSTEXTE */
-    /* ================================================ */
-
-    #roof-status,
-    #tilt-info,
-    #mounting-direction-info,
-    #row-gap-info {
-      padding: 0.65rem;
-      border-radius: 4px;
-      background: #e7e7ef;
-      font-size: 0.85rem;
-      line-height: 1.45;
-    }
-
-    /* ================================================ */
-    /* AUFSTÄNDERUNGSART UND AZIMUT */
-    /* ================================================ */
-
-    #mounting-direction-value {
-      margin-top: 0.5rem;
-      padding: 0.8rem 0.5rem;
-      border: 1px solid #aaaaaa;
-      border-radius: 4px;
-      background: white;
-      font-size: 1rem;
-      font-weight: bold;
-      text-align: center;
-      line-height: 1.5;
-    }
-
-    #mounting-direction-info {
-      margin-top: 0.5rem;
-    }
-
-    /* ================================================ */
-    /* REIHENABSTAND */
-    /* ================================================ */
-
-    #row-gap-value {
-      margin-top: 0.5rem;
-      padding: 0.65rem;
-      border: 1px solid #aaaaaa;
-      border-radius: 4px;
-      background: white;
-      font-size: 1rem;
-      font-weight: bold;
-      text-align: center;
-    }
-
-    /* ================================================ */
-    /* SICHTBARKEIT */
-    /* ================================================ */
-
+    #area-editor[hidden],
     #mounting-direction-section[hidden],
     #row-gap-section[hidden] {
       display: none;
     }
 
-    /* ================================================ */
-    /* EDITOR-AKTIONEN */
-    /* ================================================ */
+    #area-editor h2 {
+      margin: 0 0 0.5rem;
+      font-size: 1.1rem;
+      line-height: 1.3;
+    }
 
-    #editor-actions {
+    #area-editor label,
+    #area-editor .editor-field-label {
+      display: block;
+      margin: 0 0 0.3rem;
+      font-size: 0.84rem;
+      font-weight: 700;
+    }
+
+    #area-editor .editor-field {
+      margin-top: 0.7rem;
+      min-width: 0;
+    }
+
+    #area-editor input[type="number"],
+    #area-editor select {
+      box-sizing: border-box;
+      width: 100%;
+      min-width: 0;
+      margin: 0;
+      padding: 0.5rem 0.55rem;
+      border: 1px solid #aaaaaa;
+      border-radius: 5px;
+      background: white;
+      font: inherit;
+      font-size: 0.88rem;
+    }
+
+    #roof-status {
+      margin: 0;
+      padding: 0.45rem 0.55rem;
+      border-radius: 5px;
+      background: #e7e7ef;
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+
+    /* Die Elemente bleiben für bestehende JS-Zugriffe erhalten. */
+    #tilt-info,
+    #row-gap-info {
+        display: none;
+    }
+
+    #mounting-direction-info {
+        display: block;
+        margin: 0.5rem 0 0;
+        padding: 0.5rem 0.65rem;
+        border-radius: 4px;
+        background: #e7e7ef;
+        font-size: 0.8rem;
+        line-height: 1.4;
+    }
+
+    /* Original-Select bleibt im DOM und wird von den Buttons gesteuert. */
+    #area-editor #module-orientation {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #orientation-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border: 1px solid #aaaaaa;
+      border-radius: 5px;
+      overflow: hidden;
+      background: white;
+    }
+
+    #orientation-buttons button {
+      padding: 0.55rem 0.3rem;
+      border: 0;
+      background: white;
+      color: #333333;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    #orientation-buttons button + button {
+      border-left: 1px solid #cccccc;
+    }
+
+    #orientation-buttons button[aria-pressed="true"] {
+      background: #dce8fb;
+      color: #254f91;
+      font-weight: 700;
+    }
+
+    #orientation-buttons button:focus-visible {
+      outline: 2px solid #254f91;
+      outline-offset: -2px;
+    }
+
+    #mounting-direction-value {
+      margin: 0;
+      padding: 0.6rem 0.45rem;
+      border: 1px solid #aaaaaa;
+      border-radius: 5px;
+      background: white;
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-align: center;
+      line-height: 1.35;
+    }
+
+    #area-editor .editor-two-columns {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 0.65rem;
+    }
+
+    #row-gap-section {
       display: flex;
-      gap: 0.75rem;
-      margin-top: 1.5rem;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.6rem;
+      margin-top: 0.8rem;
+      padding: 0.2rem 0;
+    }
+
+    #row-gap-section .editor-field-label {
+      margin: 0;
+      font-size: 0.81rem;
+      font-weight: 400;
+      color: #555555;
+    }
+
+    #row-gap-value {
+      flex-shrink: 0;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+
+    /* Aktionsleiste bleibt beim Scrollen unten sichtbar. */
+    #editor-actions {
+      position: sticky;
+      bottom: 0;
+      z-index: 1;
+      display: flex;
+      gap: 0.6rem;
+      margin: 0.8rem -0.95rem 0;
+      padding: 0.65rem 0.95rem;
+      background: rgba(245, 245, 250, 0.99);
+      border-top: 1px solid #dedee6;
     }
 
     #editor-actions button {
       flex: 1;
-      padding: 0.7rem;
+      min-width: 0;
+      padding: 0.65rem;
+      border-radius: 5px;
+      font: inherit;
       cursor: pointer;
     }
 
@@ -354,7 +446,12 @@
       border: 1px solid #aaaaaa;
     }
 
-    
+    @media (max-height: 650px) {
+      #area-editor { padding-top: 0.6rem; }
+      #area-editor .editor-field { margin-top: 0.45rem; }
+      #area-editor h2 { margin-bottom: 0.35rem; }
+    }
+
     /* ================================================ */
     /* SEITENMENÜ EINSTELLUNGEN */
     /* ================================================ */
@@ -473,7 +570,7 @@
         color: #333333;
     }
 
-    .settings-content input {
+    .settings-content select {
         box-sizing: border-box;
         width: 100%;
         padding: 0.6rem;
@@ -485,6 +582,9 @@
         font-size: 0.9rem;
     }
 
+    #custom-covise-host-section[hidden] {
+        display: none;
+    }
     .settings-content button {
         width: 100%;
         margin-top: 0.8rem;
@@ -895,196 +995,84 @@
 
       <h2>Modulfläche bearbeiten</h2>
 
+      <!-- Dynamischer Dachstatus (wird in main.js aktualisiert) -->
+      <p id="roof-status">Dachfläche wird ausgewertet.</p>
 
-
-    <!-- ============================================ -->
-    <!-- DACHANALYSE -->
-    <!-- ============================================ -->
-
-    <p id="roof-status">
-      Dachfläche wird ausgewertet.
-    </p>
-
-    <!-- ============================================ -->
-    <!-- MODULFORMAT -->
-    <!-- ============================================ -->
-
-    <label for="module-type">
-      Modulformat
-    </label>
-
-    <select id="module-type">
-
-      <option value="compact">
-        Kleinformat – 1,760 × 1,134 m
-      </option>
-
-      <option value="large">
-        Großformat – 2,384 × 1,134 m
-      </option>
-
-    </select>
-
-    <!-- ============================================ -->
-    <!-- MODULORIENTIERUNG -->
-    <!-- ============================================ -->
-
-    <label for="module-orientation">
-      Modulorientierung
-    </label>
-
-    <select id="module-orientation">
-
-      <option value="portrait">
-        Hochformat
-      </option>
-
-      <option value="landscape">
-        Querformat
-      </option>
-
-    </select>
-
-    <!-- ============================================ -->
-    <!-- AUFSTÄNDERUNGSART / AZIMUT -->
-    <!-- ============================================ -->
-
-    <div
-      id="mounting-direction-section"
-      hidden
-    >
-
-      <label>
-        Aufständerungsart und Azimutwinkel
-      </label>
-
-      <div
-        id="mounting-direction-value"
-        aria-live="polite"
-      >
-        Süden – wird berechnet
+      <div class="editor-field">
+        <label for="module-type">Modulformat</label>
+        <select id="module-type">
+          <option value="compact">Kleinformat – 1,760 × 1,134 m</option>
+          <option value="large">Großformat – 2,384 × 1,134 m</option>
+        </select>
       </div>
 
-      <p id="mounting-direction-info">
-        Die Ausrichtung wird automatisch anhand
-        der Kanten des ausgewählten Dachbereichs
-        bestimmt.
-
-        Klicken Sie auf den Pfeil in der Dachfläche,
-        um zwischen Südausrichtung und
-        Ost-West-Aufständerung zu wechseln.
-
-        Bei einer Ost-West-Aufständerung werden
-        die Module paarweise mit entgegengesetzter
-        Neigungsrichtung angeordnet.
-
-        Die angezeigten Azimutwinkel geben
-        die tatsächlichen Ausrichtungen der
-        Modulflächen an.
-      </p>
-
-    </div>
-
-    <!-- ============================================ -->
-    <!-- AUFSTELLWINKEL -->
-    <!-- ============================================ -->
-
-    <label for="module-tilt">
-      Aufstellwinkel [°]
-    </label>
-
-    <input
-      id="module-tilt"
-      type="number"
-      min="0"
-      max="45"
-      step="1"
-      value="0"
-    >
-
-    <p id="tilt-info">
-      Bei Flachdächern kann der zusätzliche
-      Aufstellwinkel zwischen 0° und 45°
-      eingestellt werden.
-    </p>
-
-    <!-- ============================================ -->
-    <!-- AUTOMATISCHER REIHENABSTAND -->
-    <!-- ============================================ -->
-
-    <div
-      id="row-gap-section"
-      hidden
-    >
-
-      <label>
-        Automatischer Reihenabstand
-      </label>
-
-      <div
-        id="row-gap-value"
-        aria-live="polite"
-      >
-        0,00 m
+      <div class="editor-field">
+        <span class="editor-field-label" id="orientation-label">Modulorientierung</span>
+        <!-- Vorhandene ID und Werte für main.js beibehalten -->
+        <select id="module-orientation" aria-label="Modulorientierung" tabindex="-1">
+          <option value="portrait">Hochformat</option>
+          <option value="landscape">Querformat</option>
+        </select>
+        <div id="orientation-buttons" role="group" aria-labelledby="orientation-label">
+          <button type="button" data-orientation="portrait" aria-pressed="true">Hochformat</button>
+          <button type="button" data-orientation="landscape" aria-pressed="false">Querformat</button>
+        </div>
       </div>
 
-      <p id="row-gap-info">
-        Bei einer Südausrichtung wird der freie
-        Mindestabstand zwischen aufeinanderfolgenden
-        Modulreihen berechnet.
+      <div id="mounting-direction-section" class="editor-field" hidden>
+          <span class="editor-field-label">Aufständerung · Azimut</span>
 
-        Bei einer Ost-West-Aufständerung bilden
-        jeweils zwei Modulreihen ein Paar mit
-        gemeinsamer hoher Kante. Der angezeigte
-        Abstand bezieht sich dann auf den freien
-        Abstand zwischen benachbarten Modulpaaren.
+          <div id="mounting-direction-value" aria-live="polite">
+              Süden – wird berechnet
+          </div>
 
-        Die Berechnung erfolgt anhand eines
-        vereinfachten geometrischen
-        Verschattungsmodells.
-      </p>
+          <p id="mounting-direction-info">
+              Die Ausrichtung wird anhand der Dachkanten bestimmt.
+              Zum Wechseln auf den Pfeil in der Dachfläche klicken.
+          </p>
+      </div>
 
-    </div>
 
-    <!-- ============================================ -->
-    <!-- RANDABSTAND -->
-    <!-- ============================================ -->
+      <div class="editor-two-columns">
+        <div class="editor-field">
+          <label for="module-tilt">Aufstellwinkel [°]</label>
+          <input id="module-tilt" type="number" min="0" max="45" step="1" value="0">
+        </div>
+        <div class="editor-field">
+          <label for="edge-distance">Randabstand [m]</label>
+          <input id="edge-distance" type="number" min="0" step="0.1" value="0">
+        </div>
+      </div>
+      <!-- Wird ggf. dynamisch aktualisiert, aber nicht eingeblendet -->
+      <p id="tilt-info"></p>
 
-    <label for="edge-distance">
-      Randabstand [m]
-    </label>
+      
+        <div id="row-gap-section" class="editor-field" hidden>
 
-    <input
-      id="edge-distance"
-      type="number"
-      min="0"
-      step="0.1"
-      value="0.5"
-    >
+            <label for="row-gap-input">
+                Reihenabstand [m]
+            </label>
 
-    <!-- ============================================ -->
-    <!-- EDITOR-AKTIONEN -->
-    <!-- ============================================ -->
+            <input
+                id="row-gap-input"
+                type="number"
+                min="0"
+                max="1000"
+                step="0.01"
+                value="0"
+            >
 
-    <div id="editor-actions">
+            <span id="row-gap-value" hidden></span>
 
-      <button
-        id="finish-area"
-        type="button"
-      >
-        Fertig
-      </button>
+        </div>
 
-      <button
-        id="cancel-area"
-        type="button"
-      >
-        Abbrechen
-      </button>
 
-    </div>
+      <div id="editor-actions">
+        <button id="finish-area" type="button">Fertig</button>
+        <button id="cancel-area" type="button">Abbrechen</button>
+      </div>
 
-  </aside>
+    </aside>
 
 
   
@@ -1201,76 +1189,65 @@
 
 
         
-    <!-- ============================================== -->
-    <!-- VERBINDUNGSEINSTELLUNGEN -->
-    <!-- ============================================== -->
 
-    <details class="settings-section">
+<!-- ============================================== -->
+<!-- VERBINDUNGSEINSTELLUNGEN -->
+<!-- ============================================== -->
 
-        <summary>Verbindungseinstellungen</summary>
+<details class="settings-section">
 
-        <div class="settings-content">
+    <summary>Verbindungseinstellungen</summary>
 
-            <label for="server-url-input">
-                Node.js-Serveradresse
-            </label>
+    <div class="settings-content">
 
-            <input
-                id="server-url-input"
-                type="text"
-                value="http://localhost:8080"
-                placeholder="http://localhost:8080"
-            >
+        <label for="covise-host-select">
+            OpenCOVER / MapLink – Rechner
+        </label>
+
+        <select id="covise-host-select">
+            <option value="local">
+                Eigener Rechner (lokal)
+            </option>
+            <option value="visent">
+                VISENT (HLRS)
+            </option>
+            <option value="other">
+                Anderer Rechner
+            </option>
+        </select>
+
+        <!-- Nur bei "Anderer Rechner" sichtbar -->
+        <div id="custom-covise-host-section" hidden>
 
             <label for="covise-host-input">
-                OpenCOVER / MapLink-Host
+                IP-Adresse oder Hostname
             </label>
 
             <input
                 id="covise-host-input"
                 type="text"
-                value="127.0.0.1"
-                placeholder="127.0.0.1"
+                placeholder="z. B. 192.168.1.100"
             >
-
-            <label for="covise-port-input">
-                MapLink-Port
-            </label>
-
-            <input
-                id="covise-port-input"
-                type="number"
-                min="1"
-                max="65535"
-                value="31822"
-            >
-
-            <button
-                id="apply-connection-settings"
-                type="button"
-                class="settings-primary-button"
-                disabled
-            >
-                Verbindung herstellen
-            </button>
-
-            <button
-                id="reset-connection-settings"
-                type="button"
-                class="settings-secondary-button"
-                disabled
-            >
-                Standardwerte wiederherstellen
-            </button>
-
-            <p id="connection-status">
-                Aktuelle Standardverbindung:
-                localhost / 127.0.0.1
-            </p>
 
         </div>
 
-    </details>
+        <button
+            id="apply-connection-settings"
+            type="button"
+            class="settings-primary-button"
+        >
+            Verbindung herstellen
+        </button>
+
+        <p id="connection-status" aria-live="polite">
+            Zielrechner: Eigener Rechner (lokal).
+        </p>
+
+    </div>
+
+</details>
+
+
 
   </aside>
 
@@ -1358,6 +1335,39 @@
   <!-- ============================================== -->
   <!-- JAVASCRIPT -->
   <!-- ============================================== -->
+
+  <!-- Kompakte Orientierungsbuttons: bestehendes Select und Change-Events bleiben erhalten. -->
+  <script>
+    (() => {
+      const orientationSelect = document.getElementById('module-orientation');
+      const orientationButtons = document.getElementById('orientation-buttons');
+      const editor = document.getElementById('area-editor');
+      if (!orientationSelect || !orientationButtons || !editor) return;
+
+      function updateOrientationButtons() {
+        orientationButtons.querySelectorAll('button[data-orientation]').forEach((button) => {
+          button.setAttribute('aria-pressed', String(button.dataset.orientation === orientationSelect.value));
+        });
+      }
+
+      orientationButtons.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-orientation]');
+        if (!button) return;
+        if (orientationSelect.value !== button.dataset.orientation) {
+          orientationSelect.value = button.dataset.orientation;
+          orientationSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        updateOrientationButtons();
+      });
+
+      orientationSelect.addEventListener('change', updateOrientationButtons);
+      new MutationObserver(updateOrientationButtons).observe(editor, {
+        attributes: true,
+        attributeFilter: ['hidden']
+      });
+      updateOrientationButtons();
+    })();
+  </script>
 
   <script src="./main.js" type="module"></script>
 

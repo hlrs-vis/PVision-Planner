@@ -303,15 +303,14 @@ function createSetModulesMessage(modules) {
     const cornersPerModule = 4;
 
     const payloadLength =
-        1 +
-        5 +
-        5 +
+        1 + // Steuerbyte
+        5 + // MSG_SetModules
+        5 + // Modulanzahl
         modules.length *
         (
-            5 +
-            cornersPerModule *
-            valuesPerCorner *
-            9
+            5 + // Modul-ID
+            cornersPerModule * valuesPerCorner * 9 +
+            5   // Dachtyp
         );
 
     const payload = Buffer.alloc(payloadLength);
@@ -333,6 +332,7 @@ function createSetModulesMessage(modules) {
         offset
     );
 
+    
     for (const module of modules) {
         if (
             !Number.isInteger(module.id) ||
@@ -344,12 +344,14 @@ function createSetModulesMessage(modules) {
             );
         }
 
+        // Modul-ID
         offset = writeTbInt32(
             payload,
             module.id,
             offset
         );
 
+        // Vier Eckpunkte übertragen
         for (const corner of module.corners) {
             if (
                 !Number.isFinite(corner.longitude) ||
@@ -379,9 +381,30 @@ function createSetModulesMessage(modules) {
                 offset
             );
         }
+
+        // Dachtyp prüfen und codieren
+        if (
+            module.roofType !== "flat" &&
+            module.roofType !== "pitched"
+        ) {
+            throw new Error(
+                `Ungültiger Dachtyp für Modul ${module.id}.`
+            );
+        }
+
+        const roofTypeCode =
+            module.roofType === "flat" ? 0 : 1;
+
+        // Dachtyp nach den Eckpunkten übertragen
+        offset = writeTbInt32(
+            payload,
+            roofTypeCode,
+            offset
+        );
     }
 
-    return buildCoviseMessage(payload);
+return buildCoviseMessage(payload);
+
 }
 
 
