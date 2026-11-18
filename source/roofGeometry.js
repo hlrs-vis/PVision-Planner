@@ -675,11 +675,26 @@ function createModuleLayout(roofPoints, roofPlane, config) {
         "negative-u": "positive-u"
     };
 
-    const mountingDirection =
-        mountingType === "south"
+    let mountingDirection;
+
+    if (roofType === "pitched") {
+        const slopeU = roofPlane.a * roofBasis.u.x +
+            roofPlane.b * roofBasis.u.y;
+        const slopeV = roofPlane.a * roofBasis.v.x +
+            roofPlane.b * roofBasis.v.y;
+
+        // Die Rasterachse v soll entlang der Dachkante verlaufen,
+        // die den größten Höhenunterschied pro Meter hat.
+        if (Math.abs(slopeU) > Math.abs(slopeV)) {
+            mountingDirection = slopeU >= 0 ? "positive-u" : "negative-u";
+        } else {
+            mountingDirection = slopeV >= 0 ? "positive-v" : "negative-v";
+        }
+    } else {
+        mountingDirection = mountingType === "south"
             ? oppositeDirections[orientation.southDirection]
             : orientation.eastDirection;
-
+    }
 
     const layoutBasis = calculateLayoutBasis(
         roofBasis,

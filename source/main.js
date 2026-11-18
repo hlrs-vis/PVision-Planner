@@ -235,7 +235,7 @@ const selectionStyle = new Style({
 // SOURCES UND LAYER
 // =========================================================
 
-const MIN_SNAPSHOT_ZOOM = 19;
+const MIN_SNAPSHOT_ZOOM = MIN_DRAW_ZOOM
 
 const snapshotLayer = new ImageLayer({
     visible: false,
@@ -5007,14 +5007,6 @@ async function fetchSnapshotForCurrentExtent(requestVersion) {
 }
 
 // =========================================================
-// SNAPSHOT MANUELL AKTUALISIEREN
-// =========================================================
-
-function updateSnapshotLayer() {
-    scheduleSnapshotRefresh(0);
-}
-
-// =========================================================
 // SNAPSHOT BEI KARTENBEWEGUNG UND ZOOM
 // =========================================================
 
@@ -5042,25 +5034,6 @@ map.getView().on(
             MIN_SNAPSHOT_ZOOM
         ) {
             hideSnapshotBelowMinimumZoom();
-        }
-    }
-);
-
-// =========================================================
-// TASTE M: SNAPSHOT MANUELL AKTUALISIEREN
-// =========================================================
-
-document.addEventListener(
-    'keydown',
-    event => {
-        if (
-            event.key.toLowerCase() === 'm' &&
-            !event.repeat &&
-            !['INPUT', 'TEXTAREA', 'SELECT'].includes(
-                document.activeElement?.tagName
-            )
-        ) {
-            updateSnapshotLayer();
         }
     }
 );
