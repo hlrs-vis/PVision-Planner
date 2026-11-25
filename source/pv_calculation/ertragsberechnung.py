@@ -181,7 +181,7 @@ def speichere_wetterdaten(
     print(f"\nWetterdaten gespeichert: {dateipfad}")
     
 # --------------------------------------------------
-# 4.Wetterdaten aus CSV laden oder von PVGIS abrufen
+# 4. Wetterdaten aus CSV laden oder von PVGIS abrufen
 # --------------------------------------------------
 
 def lade_oder_erstelle_wetterdaten(latitude=LATITUDE, longitude=LONGITUDE):
@@ -495,9 +495,9 @@ def main_json():
     # Optionale Berechnungsparameter einlesen
     albedo = float(eingabe.get("albedo", 0.20))
 
-    # Eingabe in %/K, beispielsweise -0.35
+    # Eingabe in %/K, beispielsweise -0.37
     temperaturkoeffizient = (
-        float(eingabe.get("temperaturkoeffizient", -0.35)) / 100
+        float(eingabe.get("temperaturkoeffizient", -0.37)) / 100
     )
 
     # Eingabe als Verlustanteil in %, beispielsweise 14

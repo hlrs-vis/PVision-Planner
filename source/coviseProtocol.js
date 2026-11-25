@@ -217,9 +217,9 @@ function createGetHeightMessage(points) {
 /**
  * Snapshot-Anfrage an MapLink.
  *
- * x, y: linke untere Ecke im OpenCOVER-Projektraum
- * width, height: Ausdehnung in diesem Koordinatensystem
- * xRes, yRes: Bildauflösung in Pixeln
+ * minLon, minLat, maxLon, maxLat:
+ * geografischer Kartenausschnitt in EPSG:4326.
+ * Die Bildauflösung wird innerhalb der Funktion festgelegt.
  */
 
 function createGetMapMessage({
@@ -296,6 +296,7 @@ function createGetMapMessage({
 // je Modul:
 // moduleId
 // 4 * (longitude, latitude, height)
+// roofTypeCode: 0 = Flachdach, 1 = Schrägdach
 // =========================================================
 
 function createSetModulesMessage(modules) {
@@ -729,9 +730,9 @@ function parseMapLinkPayload(payload) {
     // MSG_DeleteModules Bestätigung
     // -----------------------------------------------------
     //
-    // Falls das Plugin nach dem Löschen zusätzlich die
-    // Anzahl gelöschter Module zurückgibt, wird sie gelesen.
-    // Andernfalls bleibt nur die Kommando-Bestätigung.
+    // -----------------------------------------------------
+    // Optionale Bestätigung für MSG_ClearAllModules.
+    // Das aktuelle MapLink-Plugin sendet diese nicht.
     // -----------------------------------------------------
 
     if (command === MSG_DeleteModules) {

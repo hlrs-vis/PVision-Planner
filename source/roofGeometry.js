@@ -3,7 +3,7 @@
 // =========================================================
 
 const EARTH_RADIUS_M = 6378137.0;
-const DEFAULT_PLANARITY_TOLERANCE_M = 3.00;
+const DEFAULT_PLANARITY_TOLERANCE_M = 0.50;
 
 function degToRad(deg) {
     return deg * Math.PI / 180.0;
@@ -627,7 +627,7 @@ function createModuleLayout(roofPoints, roofPlane, config) {
         throw new Error(`Ungültiger Dachtyp: ${roofType}`);
     }
 
-    // Neu: Unterscheidung Süd / Ost-West
+    // Aufständerungsart: Süd oder Ost-West
     const mountingType = config.mountingType ?? "south";
 
     if (!["south", "east_west"].includes(mountingType)) {
@@ -790,8 +790,7 @@ function createModuleLayout(roofPoints, roofPlane, config) {
 
     } else {
 
-        // Flachdach:
-        // Bisherige Berechnung unverändert lassen.
+        // Flachdach: Modulabmessungen anhand des Aufstellwinkels projizieren.
         const projectedDimensions =
             calculateProjectedModuleDimensions(
                 moduleLength,

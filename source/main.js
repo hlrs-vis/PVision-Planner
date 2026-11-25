@@ -1654,8 +1654,7 @@ async function finishAreaEditing() {
         const draftId = currentRoofDraftId;
         const settings = getCurrentModuleSettings();
 
-        // Die letzte Einstellung verbindlich neu berechnen.
-        // Dieselbe vorhandene Vorschaufunktion verwenden.
+        // Modulbelegung vor dem Abschluss mit den aktuellen Einstellungen neu berechnen.
         await sendRoofDraftUpdate(draftId, settings);
 
         if (currentPreviewModules.length === 0) {
@@ -4318,6 +4317,192 @@ function createYieldGroups(powers) {
     return Array.from(groups.values());
 }
 
+function exportYieldMonthlyChartPng(result, categories, colors) {
+    const months = [
+        'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'
+    ];
+
+    // Bereits berechnete Erträge je Kategorie zusammenfassen.
+    const series = categories.map(category => ({
+        label: getYieldCategoryLabel(category),
+        values: months.map((_, month) =>
+            result.gruppen
+                .filter(group => group.kategorie === category)
+                .reduce(
+                    (sum, group) =>
+                        sum + Number(group.monatswerte_kwh[month]),
+                    0
+                )
+        )
+    }));
+
+    const totals = months.map((_, month) =>
+        series.reduce((sum, item) => sum + item.values[month], 0)
+    );
+
+    // Große Erträge in MWh darstellen, ansonsten in kWh.
+    const divisor = Math.max(...totals) >= 10000 ? 1000 : 1;
+    const unit = divisor === 1000 ? 'MWh' : 'kWh';
+    const maximum = Math.max(1, ...totals) / divisor;
+    const magnitude = 10 ** Math.floor(Math.log10(maximum / 5));
+    const step = [1, 2, 2.5, 5, 10]
+        .find(value => value * magnitude >= maximum / 5) * magnitude;
+    const ceiling = Math.ceil(maximum / step) * step;
+
+    const width = 1500;
+    const left = 150;
+    const right = 50;
+    const top = 125;
+    const plotHeight = 560;
+    const bottom = top + plotHeight;
+    const plotWidth = width - left - right;
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Positionen der Legende mit automatischem Zeilenumbruch.
+    ctx.font = '20px Arial';
+    const legendItems = [];
+    let legendX = left;
+    let legendY = bottom + 125;
+
+    series.forEach((item, index) => {
+        const itemWidth = ctx.measureText(item.label).width + 65;
+
+        if (legendX > left && legendX + itemWidth > width - right) {
+            legendX = left;
+            legendY += 38;
+        }
+
+        legendItems.push({ x: legendX, y: legendY, index });
+        legendX += itemWidth;
+    });
+
+    const height = legendY + 70;
+
+    // Doppelte Auflösung für eine scharfe PNG-Datei.
+    canvas.width = width * 2;
+    canvas.height = height * 2;
+    ctx.scale(2, 2);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = '#111827';
+    ctx.font = 'bold 30px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+        `Monatliche Energieerträge der geplanten PV-Anlage (${result.year})`,
+        width / 2,
+        55
+    );
+
+    // Horizontale Hilfslinien und Werte der y-Achse.
+    ctx.font = '20px Arial';
+
+    for (let tick = 0; tick <= Math.round(ceiling / step); tick++) {
+        const value = tick * step;
+        const y = bottom - value / ceiling * plotHeight;
+
+        ctx.strokeStyle = '#d1d5db';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(width - right, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#374151';
+        ctx.textAlign = 'right';
+        ctx.fillText(
+            value.toLocaleString('de-DE', {
+                maximumFractionDigits: 3
+            }),
+            left - 15,
+            y + 7
+        );
+    }
+
+    // Gestapelte Monatssäulen.
+    const slot = plotWidth / 12;
+
+    months.forEach((month, monthIndex) => {
+        let y = bottom;
+
+        series.forEach((item, index) => {
+            const barHeight =
+                item.values[monthIndex] / divisor / ceiling * plotHeight;
+
+            y -= barHeight;
+            ctx.fillStyle = colors[index % colors.length];
+            ctx.fillRect(
+                left + monthIndex * slot + slot * 0.18,
+                y,
+                slot * 0.64,
+                barHeight
+            );
+        });
+
+        ctx.fillStyle = '#111827';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+            month,
+            left + (monthIndex + 0.5) * slot,
+            bottom + 35
+        );
+    });
+
+    // Achsenlinien.
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(left, top);
+    ctx.lineTo(left, bottom);
+    ctx.lineTo(width - right, bottom);
+    ctx.stroke();
+
+    // Achsenbeschriftungen.
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Monat', left + plotWidth / 2, bottom + 80);
+
+    ctx.save();
+    ctx.translate(40, top + plotHeight / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(`Monatlicher Energieertrag [${unit}]`, 0, 0);
+    ctx.restore();
+
+    // Vollständige Legende.
+    ctx.font = '20px Arial';
+    ctx.textAlign = 'left';
+
+    legendItems.forEach(({ x, y, index }) => {
+        ctx.fillStyle = colors[index % colors.length];
+        ctx.fillRect(x, y - 17, 18, 18);
+
+        ctx.fillStyle = '#111827';
+        ctx.fillText(series[index].label, x + 28, y);
+    });
+
+    // PNG-Datei herunterladen.
+    canvas.toBlob(blob => {
+        if (!blob) {
+            alert('Die PNG-Datei konnte nicht erzeugt werden.');
+            return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `PV_Energieertraege_${result.year}.png`;
+
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }, 'image/png');
+}
 
 function createYieldMonthlyChart(result, categories) {
 
@@ -4352,6 +4537,17 @@ function createYieldMonthlyChart(result, categories) {
     title.textContent = 'Monatliche Energieerträge';
 
     wrapper.appendChild(title);
+
+    const exportButton = document.createElement('button');
+    exportButton.type = 'button';
+    exportButton.textContent = 'Diagramm als PNG speichern';
+    exportButton.style.marginBottom = '12px';
+
+    exportButton.addEventListener('click', () => {
+        exportYieldMonthlyChartPng(result, categories, colors);
+    });
+
+    wrapper.appendChild(exportButton);
 
     // Legende
     const legend = document.createElement('div');
@@ -4832,10 +5028,11 @@ let snapshotRefreshPending = false;
 let snapshotRefreshTimer = null;
 let snapshotRequestVersion = 0;
 
-// Keine Snapshot-Anforderung bei Modulplatzierung, Vorschau
-// oder Laden einer Projektdatei.
-// Nur Kartenbewegung/Zoom und abgeschlossene Loeschungen
-// rufen scheduleSnapshotRefresh() auf.
+// Snapshot-Aktualisierung nach Kartenbewegungen, Zoom,
+// abgeschlossenen Löschungen und der Bearbeitung
+// bestehender Modulgruppen.
+// Keine Aktualisierung während der Platzierung oder Vorschau
+// sowie beim Laden einer Projektdatei.
 
 function hideSnapshotBelowMinimumZoom() {
     if (map.getView().getZoom() >= MIN_SNAPSHOT_ZOOM) {
